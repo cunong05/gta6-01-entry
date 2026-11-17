@@ -1,17 +1,19 @@
-// Boot and the one loop: input is read every frame, the world advances in fixed 1/60 s steps
-// (several in a slow frame, none in a fast one), and the renderer paints what is there. The game
-// moves between four screens: title, play, paused and game over.
+// Boot and the one loop: input is read every frame, the world advances in fixed 1/60 s
+// steps (several in a slow frame, none in a fast one), and the renderer paints what is
+// there. The game moves between five screens: title, play, paused, game over and story done.
 //
-// ?seed=N fixes the falling pattern. ?shot=start|play|end (with &seed=N) stages that scene
-// instead of running the loop, paints it twice and sets window.__shotReady for a screenshot.
-import { BEST_KEY, LIVES, STEP } from './config.js';
+// ?seed=N fixes the city. ?shot=chase|downtown|mission|start (with &seed=N) stages that
+// scene instead of running the loop, paints it twice and sets window.__shotReady.
+import { STEP } from './config.js';
 import { createRandom } from './random.js';
-import { createWorld, EVENT_HIT, EVENT_OVER } from './world.js';
-import { ACTION_CONFIRM, ACTION_PAUSE, createInput } from './input.js';
-import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+import { createWorld, EVENT_OVER } from './world.js';
+import { ACTION_CONFIRM, ACTION_MUTE, ACTION_PAUSE, createInput } from './input.js';
+import {
+  SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_STORY, SCREEN_TITLE, createRenderer,
+} from './render.js';
 import { stageShot } from './shots.js';
 
-/** The longest frame the loop catches up on; a longer stall (a hidden tab) is dropped, not replayed. */
+/** The longest frame the loop catches up on; a longer stall (a hidden tab) is dropped. */
 const MAX_FRAME = 0.25;
 
 const params = new URLSearchParams(window.location.search);
@@ -24,27 +26,12 @@ const status = document.getElementById('status');
 const world = createWorld(createRandom(seed));
 const renderer = createRenderer(canvas);
 
-function readBest() {
-  try {
-    return Number.parseInt(window.localStorage.getItem(BEST_KEY) ?? '0', 10) || 0;
-  } catch {
-    return 0;
-  }
-}
-
-function saveBest(value) {
-  try {
-    window.localStorage.setItem(BEST_KEY, String(value));
-  } catch {
-    // Storage can be off (private windows): the best score then lasts this visit only.
-  }
-}
-
 function runShot(name) {
   const scene = stageShot(name, world);
+  window.__world = world;
   let painted = 0;
   function paint() {
-    renderer.draw(world.state, scene.screen, scene.best);
+    renderer.draw(world.state, scene.screen, { hasSave: scene.hasSave });
     painted += 1;
     if (painted < 2) requestAnimationFrame(paint);
     else window.__shotReady = true;
@@ -54,52 +41,83 @@ function runShot(name) {
 
 function runGame() {
   const input = createInput(canvas);
+  const audio = world.state.audio;
+  window.__world = world;
   let screen = SCREEN_TITLE;
-  let best = readBest();
+  let hasSave = world.loadGame() !== null;
   let accumulator = 0;
   let last = performance.now();
 
-  // Screen readers (and anyone watching the page's text) hear the screen changes and each hit.
   function announce(message) {
     status.textContent = message;
   }
 
-  function startGame() {
-    world.reset();
+  function startGame(continueSave) {
+    input.takeActions(); // flush stale presses queued on the title screen
+    if (continueSave) {
+      const save = world.loadGame();
+      world.reset();
+      if (save) world.applySave(save);
+      announce('Cerita dilanjutkan.');
+    } else {
+      world.reset();
+      announce('Cerita baru. Antar paket ke kafe Mama Rosa.');
+    }
     accumulator = 0;
     screen = SCREEN_PLAY;
-    announce(`Playing. ${LIVES} lives.`);
+    audio.unlock();
   }
 
   function endGame() {
     screen = SCREEN_OVER;
-    if (world.state.score > best) {
-      best = world.state.score;
-      saveBest(best);
-    }
-    announce(`Game over. Score ${world.state.score}. Best ${best}.`);
+    announce('Rico tumbang. Tekan Enter untuk main lagi.');
   }
 
   function handleActions() {
-    const actions = input.takeActions();
-    if (actions & ACTION_CONFIRM && (screen === SCREEN_TITLE || screen === SCREEN_OVER)) startGame();
-    else if (actions & ACTION_PAUSE && screen === SCREEN_PLAY) {
-      screen = SCREEN_PAUSED;
-      announce('Paused.');
-    } else if (actions & (ACTION_PAUSE | ACTION_CONFIRM) && screen === SCREEN_PAUSED) {
-      screen = SCREEN_PLAY;
-      announce('Playing.');
+    // The menu takes only its own bits; the world takes the rest (interact,
+    // punch, weapon) in its step, so a keypress is never eaten by the menu.
+    const actions = input.takeActions(ACTION_CONFIRM | ACTION_PAUSE | ACTION_MUTE);
+    if (actions & ACTION_MUTE) {
+      audio.setMuted(!audio.isMuted());
+      announce(audio.isMuted() ? 'Suara mati.' : 'Suara hidup.');
+    }
+    if (actions & ACTION_CONFIRM) audio.unlock();
+    if (screen === SCREEN_TITLE) {
+      if (actions & ACTION_CONFIRM) startGame(hasSave);
+    } else if (screen === SCREEN_OVER) {
+      if (actions & ACTION_CONFIRM) startGame(false);
+    } else if (screen === SCREEN_STORY) {
+      if (actions & ACTION_CONFIRM) screen = SCREEN_PLAY;
+    } else if (screen === SCREEN_PLAY) {
+      if (actions & ACTION_PAUSE) {
+        world.saveGame();
+        screen = SCREEN_PAUSED;
+        announce('Jeda. Progress tersimpan.');
+      }
+    } else if (screen === SCREEN_PAUSED) {
+      if (actions & (ACTION_PAUSE | ACTION_CONFIRM)) {
+        screen = SCREEN_PLAY;
+        announce('Lanjut main.');
+      }
     }
   }
 
+  // N is not in input.js's action set: watch it here for "new game" on the title.
+  window.addEventListener('keydown', (event) => {
+    if (event.code === 'KeyN' && !event.repeat && screen === SCREEN_TITLE) startGame(false);
+  });
+
   function step() {
     if (screen === SCREEN_TITLE) {
-      world.step(STEP, 0, true);
+      world.step(STEP, input, true);
       return;
     }
-    const events = world.step(STEP, input.direction(), false);
+    const events = world.step(STEP, input, false);
     if (events & EVENT_OVER) endGame();
-    else if (events & EVENT_HIT) announce(world.state.lives === 1 ? 'Hit. 1 life left.' : `Hit. ${world.state.lives} lives left.`);
+    else if (world.state.storyDone && screen === SCREEN_PLAY) {
+      screen = SCREEN_STORY;
+      announce('Cerita selesai! Solmar Bay milik kita lagi.');
+    }
   }
 
   function frame(now) {
@@ -115,18 +133,19 @@ function runGame() {
     } else {
       accumulator = 0;
     }
-    renderer.draw(world.state, screen, best);
+    renderer.draw(world.state, screen, { hasSave });
   }
 
-  // Leaving the tab pauses a running game rather than letting blocks fall unseen.
+  // Leaving the tab pauses a running game rather than letting the police close in unseen.
   document.addEventListener('visibilitychange', () => {
     if (document.hidden && screen === SCREEN_PLAY) {
+      world.saveGame();
       screen = SCREEN_PAUSED;
-      announce('Paused.');
+      announce('Jeda.');
     }
   });
 
-  announce('Block Dodger. Press Space or click to start.');
+  announce('Solmar Bay. Tekan Enter untuk mulai.');
   requestAnimationFrame(frame);
 }
 
