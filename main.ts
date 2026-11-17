@@ -4,7 +4,7 @@
 // exactly as the bounty requires. Run it locally with:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
-import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier, readGameTree } from './vendor/makefun-game.ts';
@@ -23,8 +23,12 @@ if (!existsSync(shotsDir)) {
 }
 
 // A clean output directory, so a second run writes exactly the same bytes.
-rmSync(outDir, { recursive: true, force: true });
+// Empty the directory's CONTENTS without removing the directory itself:
+// the grader mounts /output on a read-only root, so rmdir on it fails EACCES.
 mkdirSync(outDir, { recursive: true });
+for (const entry of readdirSync(outDir)) {
+  rmSync(join(outDir, entry), { recursive: true, force: true });
+}
 
 cpSync(gameDir, join(outDir, 'game'), { recursive: true });
 cpSync(shotsDir, join(outDir, 'screenshots'), { recursive: true });
