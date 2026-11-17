@@ -1,5 +1,10 @@
 // Pedestrians: walkers on the sidewalks who stroll the grid, cross at intersections
 // and run from gunfire or a car bearing down on them. They are the city breathing.
+//
+// Revision notes (this session): walkers now pause now and then — standing still to
+// look around or chat — instead of marching forever, and spawn points are checked
+// with city.isSidewalk() so nobody starts inside a building or on the asphalt.
+
 import { PEDS, ROADS, WORLD } from './config.js';
 
 const SHIRTS = ['#e8e0d0', '#d05a4a', '#4a7ad0', '#e8c94a', '#7ad04a', '#c94ad0', '#4ad0c9', '#e8a04a'];
@@ -17,6 +22,7 @@ export function createPedestrian(random, x, y) {
     fleeX: 0,
     fleeY: 0,
     walkPhase: random() * Math.PI * 2,
+    idle: 0, // seconds left standing still (chatting / looking around)
     active: true,
   };
 }
@@ -42,6 +48,7 @@ export function spawnPedestrians(city, random, count, avoidX, avoidY) {
     const y = vertical ? along : road + side;
     if (Math.hypot(x - avoidX, y - avoidY) < 260) continue;
     if (city.isWater(x, y)) continue;
+    if (!city.isSidewalk(x, y)) continue;
     peds.push(createPedestrian(random, x, y));
   }
   return peds;
@@ -67,6 +74,15 @@ export function updatePedestrian(ped, city, dt, random, danger) {
       ? (Math.cos(away) > 0 ? 0 : 2)
       : (Math.sin(away) > 0 ? 1 : 3);
     city.clampWorld(ped, 10);
+    return;
+  }
+  // Idle pause: sometimes stop for a few seconds, then carry on.
+  if (ped.idle > 0) {
+    ped.idle -= dt;
+    return;
+  }
+  if (random() < 0.0015) {
+    ped.idle = 2 + random() * 3;
     return;
   }
   const dirs = [

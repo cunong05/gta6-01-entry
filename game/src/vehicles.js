@@ -1,6 +1,12 @@
 // Cars: creation, player driving physics, and the traffic AI. Traffic cars keep to
 // their lane on the road grid, stop at red lights and behind the car ahead, and pick
 // a new direction at intersections. Police cars are driven by police.js, not here.
+//
+// Revision notes (this session): traffic now slows for the amber — when its green
+// has under 2 seconds left and the stop line is close, it eases off instead of
+// charging through — and a car stuck behind another for a while sets car.horn for
+// one frame, so the world can play a honk.
+
 import { CAR, ROADS, TRAFFIC, WORLD } from './config.js';
 
 const COLORS = ['#c94f43', '#3f6d9e', '#c9a13f', '#5a8a5f', '#8a5a9e', '#d8d8d8', '#3a3a3a', '#9e6d3f'];
@@ -28,6 +34,9 @@ export function createCar(kind, x, y, angle, color) {
     siren: 0,
     targetHp: 0, // mission chase target health; 0 = not a target
     driver: null, // 'marco' for the mission target car
+    horn: false, // set for one frame when the car honks in frustration
+    hornCooldown: 0,
+    blockedTime: 0,
   };
 }
 
@@ -110,15 +119,23 @@ export function updateTrafficCar(car, city, dt, cars, random, time) {
   const d = dirs[car.dir];
   const targetAngle = Math.atan2(d.dy, d.dx);
   car.angle += Math.max(-3 * dt, Math.min(3 * dt, angleDiff(car.angle, targetAngle)));
+  car.horn = false;
+  car.hornCooldown = Math.max(0, car.hornCooldown - dt);
 
   // Stop line: red light for my axis, or a car close ahead.
   let wantSpeed = TRAFFIC.speed;
+  let blocked = false;
   const next = nextIntersection(car);
   if (next) {
     const dist = Math.hypot(next.x - car.x, next.y - car.y);
     const axis = car.dir === 0 || car.dir === 2 ? 'ew' : 'ns';
     const green = city.lightState(time) === axis;
     if (!green && dist < 110 && dist > 20) wantSpeed = 0;
+    // Amber: green, but the light flips within 2 s and the stop line is near —
+    // ease off instead of charging through the intersection.
+    else if (green && city.lightTimeLeft(time) < 2 && dist < 140 && dist > 20) {
+      wantSpeed = Math.min(wantSpeed, TRAFFIC.speed * 0.45);
+    }
   }
   for (const other of cars) {
     if (other === car || !other.active) continue;
@@ -128,7 +145,19 @@ export function updateTrafficCar(car, city, dt, cars, random, time) {
     const side = Math.abs(dx * -d.dy + dy * d.dx);
     if (ahead > 0 && ahead < TRAFFIC.minGap && side < 30) {
       wantSpeed = Math.min(wantSpeed, Math.max(0, other.speed - 20));
+      blocked = true;
     }
+  }
+  // Stuck behind a stopped car: honk once every few seconds.
+  if (blocked && car.speed < 5) {
+    car.blockedTime += dt;
+    if (car.blockedTime > 2.5 && car.hornCooldown <= 0) {
+      car.horn = true;
+      car.hornCooldown = 3;
+      car.blockedTime = 0;
+    }
+  } else {
+    car.blockedTime = 0;
   }
   car.speed += Math.max(-300 * dt, Math.min(200 * dt, wantSpeed - car.speed));
   car.x += Math.cos(car.angle) * car.speed * dt;

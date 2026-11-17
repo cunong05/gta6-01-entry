@@ -1,12 +1,23 @@
 // Solmar Bay — every tuning number, colour and story constant in one place.
 // The city is a fixed 3600 x 2600 world; the camera follows the player, so no rule
 // below depends on the screen size. All names, people and places are original.
+//
+// Revision notes (this session): added CAMERA smoothing + zoom bounds, a SAVE_VERSION
+// so old saves are ignored instead of misread, PICKUP_RESPAWN so collected pickups
+// come back, and a DIFFICULTY table that scales police aggression per wanted star
+// instead of hard-coding the numbers inside police.js.
 
 /** The simulation's fixed step, in seconds: 60 updates a second whatever the display's rate. */
 export const STEP = 1 / 60;
 
 /** World size in pixels (top-down). */
 export const WORLD = { width: 3600, height: 2600 };
+
+/** Camera: how fast it chases the player, and the zoom window the renderer clamps to. */
+export const CAMERA = { follow: 6, minScale: 0.55, maxScale: 1.4 };
+
+/** Save format version: a save stamped with another version is ignored on load. */
+export const SAVE_VERSION = 2;
 
 /** Road layout: avenues run north-south, streets east-west. */
 export const ROADS = {
@@ -64,6 +75,13 @@ export const WANTED = {
   sprayCostPerStar: 100,
 };
 
+/** Police aggression per wanted star: top speed, ram cooldown and foot-cop speed. */
+export const DIFFICULTY = {
+  policeSpeed: [0, 380, 410, 440, 470, 500],
+  ramCooldown: [0, 1.6, 1.4, 1.2, 1.0, 0.8],
+  copSpeed: [0, 210, 225, 235, 250, 265],
+};
+
 export const POLICE = {
   maxCars: 6,
   maxCops: 8,
@@ -79,6 +97,8 @@ export const PICKUPS = {
   cash: { value: 60 },
   ammo: { amount: 12 },
   health: { amount: 35 },
+  /** Seconds until a collected pickup reappears somewhere new. */
+  respawnSeconds: 45,
 };
 
 export const DAY = { cycleSeconds: 300, start: 0.32 };

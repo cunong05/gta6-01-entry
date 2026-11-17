@@ -1,8 +1,14 @@
 // The HUD: money and health top-left, wanted stars top-right, weapon and ammo
 // bottom-left, the mission objective top-centre, speed while driving, the dialog
 // box, and short toast messages. Drawn in screen space, after the world.
+//
+// Revision notes (this session): the objective panel now shows a thin progress bar
+// for stages with measurable progress (wait / survive / kill / chase) via
+// objectiveProgress(), and low health (<30) pulses a red vignette so the danger is
+// impossible to miss.
+
 import { FONT, PALETTE } from './config.js';
-import { objectiveText } from './missions.js';
+import { objectiveProgress, objectiveText } from './missions.js';
 
 function panel(ctx, x, y, w, h) {
   ctx.fillStyle = PALETTE.panel;
@@ -24,6 +30,19 @@ export function drawHUD(ctx, state, screenW, screenH) {
   const missions = state.missions;
   ctx.textBaseline = 'alphabetic';
 
+  // Low-health pulse: a red edge that breathes while Rico is close to down.
+  if (player.health <= 30 && player.health > 0) {
+    const pulse = 0.10 + 0.08 * Math.sin(state.time * 6);
+    const grad = ctx.createRadialGradient(
+      screenW / 2, screenH / 2, Math.min(screenW, screenH) * 0.35,
+      screenW / 2, screenH / 2, Math.max(screenW, screenH) * 0.7,
+    );
+    grad.addColorStop(0, 'rgba(255,40,30,0)');
+    grad.addColorStop(1, `rgba(255,40,30,${pulse})`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, screenW, screenH);
+  }
+
   // Money + health, top-left.
   panel(ctx, 14, 12, 210, 72);
   ctx.fillStyle = PALETTE.money;
@@ -41,16 +60,24 @@ export function drawHUD(ctx, state, screenW, screenH) {
   panel(ctx, screenW - 224, 12, 210, 44);
   ctx.fillStyle = PALETTE.muted;
   ctx.font = `600 11px ${FONT}`;
-  ctx.fillText('WANTED', screenW - 210, 30);
+  ctx.fillText(state.police.wanted >= 5 ? 'WANTED — BURON' : 'WANTED', screenW - 210, 30);
   drawStars(ctx, state.police.wanted, screenW - 148, 42, 22);
 
-  // Objective, top-centre.
+  // Objective, top-centre, with a progress bar when the stage is measurable.
   const objective = objectiveText(missions);
+  const progress = objectiveProgress(missions);
   ctx.font = `600 14px ${FONT}`;
   const ow = Math.min(screenW - 480, ctx.measureText(objective).width + 28);
-  panel(ctx, (screenW - ow) / 2, 12, ow, 34);
+  const oh = progress === null ? 34 : 42;
+  panel(ctx, (screenW - ow) / 2, 12, ow, oh);
   ctx.fillStyle = '#ffd23f';
   ctx.fillText(objective, (screenW - ow) / 2 + 14, 34);
+  if (progress !== null) {
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.fillRect((screenW - ow) / 2 + 14, 40, ow - 28, 4);
+    ctx.fillStyle = '#ffd23f';
+    ctx.fillRect((screenW - ow) / 2 + 14, 40, (ow - 28) * progress, 4);
+  }
 
   // Weapon + ammo, bottom-left.
   panel(ctx, 14, screenH - 58, 200, 44);

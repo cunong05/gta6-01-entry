@@ -4,10 +4,17 @@
 //
 // ?seed=N fixes the city. ?shot=chase|downtown|mission|start (with &seed=N) stages that
 // scene instead of running the loop, paints it twice and sets window.__shotReady.
+//
+// Revision notes (this session): R now restarts from the game-over screen (the menu
+// says so), and the menu reads the restart action through the same action queue as
+// every other key instead of a separate listener.
+
 import { STEP } from './config.js';
 import { createRandom } from './random.js';
 import { createWorld, EVENT_OVER } from './world.js';
-import { ACTION_CONFIRM, ACTION_MUTE, ACTION_PAUSE, createInput } from './input.js';
+import {
+  ACTION_CONFIRM, ACTION_MUTE, ACTION_PAUSE, ACTION_RESTART, createInput,
+} from './input.js';
 import {
   SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_STORY, SCREEN_TITLE, createRenderer,
 } from './render.js';
@@ -70,13 +77,13 @@ function runGame() {
 
   function endGame() {
     screen = SCREEN_OVER;
-    announce('Rico tumbang. Tekan Enter untuk main lagi.');
+    announce('Rico tumbang. Tekan Enter atau R untuk main lagi.');
   }
 
   function handleActions() {
     // The menu takes only its own bits; the world takes the rest (interact,
     // punch, weapon) in its step, so a keypress is never eaten by the menu.
-    const actions = input.takeActions(ACTION_CONFIRM | ACTION_PAUSE | ACTION_MUTE);
+    const actions = input.takeActions(ACTION_CONFIRM | ACTION_PAUSE | ACTION_MUTE | ACTION_RESTART);
     if (actions & ACTION_MUTE) {
       audio.setMuted(!audio.isMuted());
       announce(audio.isMuted() ? 'Suara mati.' : 'Suara hidup.');
@@ -85,7 +92,7 @@ function runGame() {
     if (screen === SCREEN_TITLE) {
       if (actions & ACTION_CONFIRM) startGame(hasSave);
     } else if (screen === SCREEN_OVER) {
-      if (actions & ACTION_CONFIRM) startGame(false);
+      if (actions & (ACTION_CONFIRM | ACTION_RESTART)) startGame(false);
     } else if (screen === SCREEN_STORY) {
       if (actions & ACTION_CONFIRM) screen = SCREEN_PLAY;
     } else if (screen === SCREEN_PLAY) {

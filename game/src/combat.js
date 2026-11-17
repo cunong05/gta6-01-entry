@@ -1,6 +1,12 @@
 // Combat: the pistol (mouse aim, limited ammo), the punch (Space, close range),
 // and the pickups scattered around the city (cash, ammo, health). Bullets fly,
 // spark on walls, and hurt pedestrians, cops, guards and the chase target.
+//
+// Revision notes (this session): a punch now shoves its target back (knockback), so
+// it feels like a hit instead of a number change; bullets keep their previous
+// position so the renderer can draw a tracer line; and guards hit by a punch are
+// pushed away from the player too.
+
 import { BULLET, PICKUPS, PLAYER } from './config.js';
 
 export function createCombat() {
@@ -21,10 +27,21 @@ export function shoot(combat, state, x, y, angle) {
     life: BULLET.life,
     fromPlayer: true,
     active: true,
+    prevX: x + Math.cos(angle) * 20,
+    prevY: y + Math.sin(angle) * 20,
   });
   state.audio.shoot();
   state.spawnParticles(x + Math.cos(angle) * 26, y + Math.sin(angle) * 26, 4, '#ffd23f', 90);
   return true;
+}
+
+/** Shove a target away from the player by `amount` px (punch knockback). */
+function knockback(target, px, py, amount) {
+  const dx = target.x - px;
+  const dy = target.y - py;
+  const len = Math.hypot(dx, dy) || 1;
+  target.x += (dx / len) * amount;
+  target.y += (dy / len) * amount;
 }
 
 /** A punch: hits the nearest hostile or walker inside the arc in front of the player. */
@@ -50,6 +67,7 @@ export function punch(combat, state) {
   for (const cop of state.police.cops) {
     if (cop.active && inArc(cop, PLAYER.punchRange + 14)) {
       cop.hp -= PLAYER.punchDamage;
+      knockback(cop, px, py, 18);
       if (cop.hp <= 0) cop.active = false;
       hit = true;
     }
@@ -57,6 +75,7 @@ export function punch(combat, state) {
   for (const guard of state.missions.guards) {
     if (guard.active && inArc(guard, PLAYER.punchRange + 14)) {
       guard.hp -= PLAYER.punchDamage;
+      knockback(guard, px, py, 18);
       if (guard.hp <= 0) {
         guard.active = false;
         state.missions.kills += 1;
@@ -97,6 +116,8 @@ export function updateCombat(combat, state, dt) {
   const player = state.player;
   for (const bullet of combat.bullets) {
     if (!bullet.active) continue;
+    bullet.prevX = bullet.x;
+    bullet.prevY = bullet.y;
     bullet.x += bullet.vx * dt;
     bullet.y += bullet.vy * dt;
     bullet.life -= dt;

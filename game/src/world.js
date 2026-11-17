@@ -1,8 +1,15 @@
 // The world: the whole game state and one fixed step. No drawing here, no browser
 // except localStorage for the save — step() advances the city, the player, traffic,
 // pedestrians, police, missions and combat, and returns what happened as bit flags.
+//
+// Revision notes (this session): fixed the "Pe jalan kaki" typo in the crime toast;
+// collected pickups now respawn after PICKUP_RESPAWN seconds so the streets never
+// run dry; the save is stamped with SAVE_VERSION and old saves are ignored; traffic
+// honks are actually played (nearby cars only); the siren fades with the nearest
+// police distance; and camera smoothing uses CAMERA.follow from config.
+
 import {
-  CAR, DAY, MISSIONS, PEDS, PLAYER, ROADS, SAVE_KEY, TRAFFIC, WANTED,
+  CAMERA, CAR, DAY, MISSIONS, PEDS, PICKUPS, PLAYER, ROADS, SAVE_KEY, SAVE_VERSION, TRAFFIC, WANTED,
 } from './config.js';
 import { createCity } from './city.js';
 import { createAudio } from './audio.js';
@@ -49,6 +56,8 @@ export function createWorld(random) {
     camera: { x: 1520, y: 1100 },
     damageFlash: 0,
     pedRespawn: 0,
+    pickupRespawn: 0,
+    honkCooldown: 0,
   };
 
   /** The facade missions.js talks to: state plus the world actions it needs. */
@@ -100,6 +109,8 @@ export function createWorld(random) {
     state.storyDone = false;
     state.camera = { x: state.player.x, y: state.player.y };
     state.damageFlash = 0;
+    state.pickupRespawn = PICKUPS.respawnSeconds;
+    state.honkCooldown = 0;
     startMission(state.missions, worldApi, 0);
   }
 
@@ -141,7 +152,7 @@ export function createWorld(random) {
   function knockPed(ped) {
     spawnParticles(ped.x, ped.y, 10, '#d05a4a', 140);
     addWanted(state.police, WANTED.hitPed);
-    showMessage('Pe jalan kaki tertabrak! Polisi mengejarmu.');
+    showMessage('Pejalan kaki tertabrak! Polisi mengejarmu.');
     state.pedRespawn = 12;
   }
 
@@ -186,6 +197,7 @@ export function createWorld(random) {
           x: guard.x, y: guard.y,
           vx: Math.cos(a) * 700, vy: Math.sin(a) * 700,
           life: 0.9, fromPlayer: false, active: true,
+          prevX: guard.x, prevY: guard.y,
         });
         state.audio.shoot();
       }
@@ -244,11 +256,15 @@ export function createWorld(random) {
     }
   }
 
-  function saveGame() {    try {
+  function saveGame() {
+    try {
       const player = state.player;
       window.localStorage.setItem(SAVE_KEY, JSON.stringify({
+        version: SAVE_VERSION,
         money: Math.floor(player.money),
         missionIndex: state.missions.index,
+        missionsDone: state.missions.done ? MISSIONS.length : state.missions.index,
+        storyDone: state.missions.done,
         health: Math.floor(player.health),
         ammo: player.ammo,
         x: Math.floor(player.x),
@@ -263,7 +279,10 @@ export function createWorld(random) {
     try {
       const raw = window.localStorage.getItem(SAVE_KEY);
       if (!raw) return null;
-      return JSON.parse(raw);
+      const save = JSON.parse(raw);
+      // A save from another format version is ignored, not misread.
+      if (!save || save.version !== SAVE_VERSION) return null;
+      return save;
     } catch {
       return null;
     }
@@ -286,6 +305,7 @@ export function createWorld(random) {
     state.messageTimer = Math.max(0, state.messageTimer - dt);
     state.damageFlash = Math.max(0, state.damageFlash - dt);
     state.crashTimer = Math.max(0, (state.crashTimer || 0) - dt);
+    state.honkCooldown = Math.max(0, state.honkCooldown - dt);
     const player = state.player;
 
     // The city lives even on the title screen.
@@ -408,12 +428,44 @@ export function createWorld(random) {
     if (missionEvents & STORY_DONE) state.storyDone = true;
     sprayShopCheck();
 
+    // Traffic honks: a car stuck behind another, close enough to hear.
+    if (state.honkCooldown <= 0) {
+      for (const car of state.cars) {
+        if (car.horn && Math.hypot(car.x - player.x, car.y - player.y) < 700) {
+          audio.honk();
+          state.honkCooldown = 2.5;
+          break;
+        }
+      }
+    }
+
     // Pedestrian respawn keeps the streets alive.
     state.pedRespawn -= dt;
     if (state.pedRespawn <= 0) {
       state.pedRespawn = 8;
       const fresh = spawnPedestrians(city, random, 1, player.x, player.y);
       if (fresh.length) state.peds.push(fresh[0]);
+    }
+
+    // Collected pickups come back after a while, somewhere new.
+    state.pickupRespawn -= dt;
+    if (state.pickupRespawn <= 0) {
+      state.pickupRespawn = PICKUPS.respawnSeconds;
+      const taken = state.combat.pickups.filter((p) => !p.active);
+      if (taken.length > 0) {
+        const road = city.nearestRoad(200 + random() * 3200, 200 + random() * 2200);
+        const x = road.x + (random() - 0.5) * 160;
+        const y = road.y + (random() - 0.5) * 160;
+        if (!city.isWater(x, y)) {
+          const kinds = ['cash', 'ammo', 'health'];
+          const pickup = taken[0];
+          pickup.x = x;
+          pickup.y = y;
+          pickup.kind = kinds[Math.floor(random() * kinds.length)];
+          pickup.bob = random() * Math.PI * 2;
+          pickup.active = true;
+        }
+      }
     }
 
     // Slow health regen while the heat is off.
@@ -437,11 +489,15 @@ export function createWorld(random) {
     // Camera follows the player.
     const tx = player.x;
     const ty = player.y;
-    state.camera.x += (tx - state.camera.x) * Math.min(1, 6 * dt);
-    state.camera.y += (ty - state.camera.y) * Math.min(1, 6 * dt);
+    state.camera.x += (tx - state.camera.x) * Math.min(1, CAMERA.follow * dt);
+    state.camera.y += (ty - state.camera.y) * Math.min(1, CAMERA.follow * dt);
 
-    // Siren when police are close and the heat is on.
-    audio.siren(state.police.wanted > 0 && state.police.sirenNear, dt);
+    // Siren when police are close and the heat is on, fading with distance.
+    audio.siren(
+      state.police.wanted > 0 && state.police.sirenNear,
+      dt,
+      state.police.nearestPoliceDist ?? 0,
+    );
 
     if (state.gameOver) return EVENT_OVER;
     return missionEvents & MISSION_DONE ? EVENT_HIT : 0;

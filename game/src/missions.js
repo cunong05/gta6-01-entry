@@ -2,6 +2,11 @@
 // the showdown at the docks. Each mission is stages of goto / wait / survive / chase
 // / kill; this file owns the stage machine, the dialog lines and the payouts, and
 // the world owns the player, the cars and the guards it asks for.
+//
+// Revision notes (this session): objectiveProgress() reports how far the current
+// stage is (0..1) so the HUD can draw a progress bar for wait / survive / kill
+// stages, and totalRewards() sums the story's payouts for the end screen.
+
 import { MISSIONS } from './config.js';
 import { ROADS } from './config.js';
 
@@ -43,6 +48,30 @@ export function objectiveText(missions) {
   const stage = currentStage(missions);
   const label = stage ? stage.label : '';
   return `Misi ${missions.index + 1}/6 — ${mission.name}: ${label}`;
+}
+
+/** How far the current stage is, 0..1 (null when the stage has no measurable
+ * progress, e.g. a goto). The HUD draws this as a thin progress bar. */
+export function objectiveProgress(missions) {
+  const stage = currentStage(missions);
+  if (!stage) return null;
+  if (stage.kind === 'wait' || stage.kind === 'survive') {
+    return Math.min(1, missions.stageProgress / stage.seconds);
+  }
+  if (stage.kind === 'kill') {
+    return Math.min(1, missions.kills / stage.count);
+  }
+  if (stage.kind === 'chase') {
+    const target = missions.targetCar;
+    if (!target) return null;
+    return Math.max(0, Math.min(1, 1 - target.hp / 120));
+  }
+  return null;
+}
+
+/** Total payout of all six missions, for the story-complete screen. */
+export function totalRewards() {
+  return MISSIONS.reduce((sum, m) => sum + m.reward, 0);
 }
 
 function setDialog(missions, speaker, text) {

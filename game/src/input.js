@@ -2,6 +2,11 @@
 // (confirm, pause, interact, punch, weapon switch) are queued as bit flags and taken
 // once by the loop, so a press between two frames is never lost or counted twice.
 // Mouse clicks queue a shot with the screen position they were aimed at.
+//
+// Revision notes (this session): R is now a restart action (ACTION_RESTART) for the
+// game-over screen, right-click no longer opens the browser menu over the canvas,
+// and takeActions() keeps unmasked bits queued so the menu and the world never eat
+// each other's presses.
 
 export const ACTION_CONFIRM = 1;
 export const ACTION_PAUSE = 2;
@@ -9,6 +14,7 @@ export const ACTION_INTERACT = 4;
 export const ACTION_PUNCH = 8;
 export const ACTION_WEAPON = 16;
 export const ACTION_MUTE = 32;
+export const ACTION_RESTART = 64;
 
 const UP = new Set(['ArrowUp', 'KeyW']);
 const DOWN = new Set(['ArrowDown', 'KeyS']);
@@ -20,6 +26,7 @@ const INTERACT = new Set(['KeyE']);
 const PUNCH = new Set(['Space']);
 const WEAPON = new Set(['Digit1', 'Digit2', 'KeyQ']);
 const MUTE = new Set(['KeyM']);
+const RESTART = new Set(['KeyR']);
 
 export function createInput(canvas) {
   const held = { up: false, down: false, left: false, right: false };
@@ -46,6 +53,7 @@ export function createInput(canvas) {
     else if (PUNCH.has(event.code)) actions |= ACTION_PUNCH;
     else if (WEAPON.has(event.code)) actions |= ACTION_WEAPON;
     else if (MUTE.has(event.code)) actions |= ACTION_MUTE;
+    else if (RESTART.has(event.code)) actions |= ACTION_RESTART;
     else return;
     event.preventDefault();
   });
@@ -67,6 +75,8 @@ export function createInput(canvas) {
     clicked = true;
     actions |= ACTION_CONFIRM;
   });
+  // Right-click is aim, not a menu: keep the browser menu off the canvas.
+  canvas.addEventListener('contextmenu', (event) => event.preventDefault());
   // Space also scrolls the page in some browsers: keep the game from moving it.
   window.addEventListener('keydown', (event) => {
     if (event.code === 'Space') event.preventDefault();

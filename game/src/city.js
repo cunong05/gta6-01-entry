@@ -1,6 +1,11 @@
 // Solmar Bay's city: a fixed grid of avenues and streets split into four districts,
 // with buildings, parks, palms, lamps, the harbour water, the beach, the Spray Shop
 // and every story location. Deterministic from the seed, so screenshots repeat.
+//
+// Revision notes (this session): Downtown now has a central plaza with a fountain
+// (plazas[]), and isSidewalk(x, y) answers whether a point is walkable pavement —
+// pedestrians and pickups use it instead of guessing from the road width.
+
 import { DISTRICTS, PALETTE, ROADS, WORLD } from './config.js';
 
 const WATER_WEST = 150; // harbour strip along the west edge
@@ -77,6 +82,10 @@ export function createCity(random) {
     }
   }
 
+  // Central plaza in Downtown (avenue 1900 x street 1050 block): open pavement
+  // with a fountain, a landmark the player walks through on mission 1.
+  const plazas = [{ x: 1748, y: 898, w: 304, h: 304, name: 'Plaza Solmar' }];
+
   // Street lamps along every avenue and street, on alternating sides.
   for (const ax of avenues) {
     for (const sy of streets) {
@@ -117,7 +126,7 @@ export function createCity(random) {
   };
 
   return {
-    buildings, lamps, palms, parks, lights, sprayShop, spots,
+    buildings, lamps, palms, parks, plazas, lights, sprayShop, spots,
     waterWest: WATER_WEST,
     sandEast: SAND_EAST,
     districtAt,
@@ -133,6 +142,18 @@ export function createCity(random) {
       for (const ax of avenues) if (Math.abs(x - ax) <= half) return true;
       for (const sy of streets) if (Math.abs(y - sy) <= half) return true;
       return false;
+    },
+    /** Is this point on the sidewalk ring around a road, or on a plaza? */
+    isSidewalk(x, y) {
+      if (this.isRoad(x, y)) return false;
+      const half = width / 2;
+      for (const ax of avenues) {
+        if (Math.abs(x - ax) <= half + sidewalk) return true;
+      }
+      for (const sy of streets) {
+        if (Math.abs(y - sy) <= half + sidewalk) return true;
+      }
+      return plazas.some((p) => x >= p.x && x <= p.x + p.w && y >= p.y && y <= p.y + p.h);
     },
     /** Nearest point on a road centreline, for spawning traffic and the player. */
     nearestRoad(x, y) {
@@ -152,6 +173,11 @@ export function createCity(random) {
     lightState(t) {
       const cycle = 14;
       return (Math.floor(t / cycle) % 2 === 0) ? 'ns' : 'ew';
+    },
+    /** Seconds until the light state flips, so traffic can slow for amber. */
+    lightTimeLeft(t) {
+      const cycle = 14;
+      return cycle - (t % cycle);
     },
     /** Push a circle out of every building it overlaps; returns true on a hit. */
     resolveCircle(body, radius) {

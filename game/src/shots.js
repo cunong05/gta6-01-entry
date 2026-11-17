@@ -3,10 +3,17 @@
 // simple autopilot (drive a loop of downtown streets, walk an avenue toward the
 // mission marker), so the frame is what real play looks like and the same seed
 // always gives the same frame.
-import { STEP } from './config.js';
-import { SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+//
+// Revision notes (this session): the chase scene now plants a police car right
+// behind the player's car at the start, so the cover always shows a real pursuit
+// instead of hoping a spawned unit catches up; and the mission scene reads its
+// dialog from MISSIONS in config.js instead of duplicating the brief text.
 
-const CHASE_SECONDS = 26;
+import { MISSIONS, STEP } from './config.js';
+import { SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+import { createCar } from './vehicles.js';
+
+const CHASE_SECONDS = 20; // long enough for a real pursuit, short enough that Rico survives it
 const DOWNTOWN_SECONDS = 14;
 const MISSION_SECONDS = 0.8;
 const START_SECONDS = 8;
@@ -60,6 +67,13 @@ export function stageShot(name, world) {
     player.inCar = parked;
     player.angle = parked.angle;
     world.setWanted(3);
+    // Guarantee the cover shows a pursuit: a police car 320 px behind, already fast.
+    const tail = createCar('police',
+      player.x - Math.cos(player.angle) * 320,
+      player.y - Math.sin(player.angle) * 320,
+      player.angle, '#2f6fd0');
+    tail.speed = 460;
+    world.state.police.cars.push(tail);
     const loop = [
       [2300, 1050], [2300, 650], [1100, 650], [1100, 1050],
     ];
@@ -90,8 +104,8 @@ export function stageShot(name, world) {
       world.step(STEP, input, false);
     }
     world.state.missions.dialog = {
-      speaker: 'Mama Rosa',
-      text: 'Antar paket ke kafe Mama Rosa di Downtown. Jangan sampai paketnya basah.',
+      speaker: MISSIONS[0].giver,
+      text: MISSIONS[0].brief,
     };
     world.state.missions.dialogTimer = 5;
     return { screen: SCREEN_PLAY, hasSave: false };

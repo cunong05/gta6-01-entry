@@ -3,6 +3,12 @@
 // and crashes are filtered noise bursts, and pickups and missions are short blips.
 // Everything is a no-op until unlock() runs from a user gesture, and until then the
 // game stays silent instead of throwing.
+//
+// Revision notes (this session): the siren now fades with distance (its third
+// argument), traffic can honk with a new honk() blip, and the mute choice is kept in
+// localStorage so it survives a reload.
+
+const MUTE_KEY = 'solmar-bay.muted.v1';
 
 function makeNoiseBuffer(context) {
   const length = context.sampleRate * 0.5;
@@ -24,6 +30,12 @@ export function createAudio() {
   let muted = false;
   let unlocked = false;
 
+  try {
+    muted = window.localStorage.getItem(MUTE_KEY) === '1';
+  } catch {
+    muted = false;
+  }
+
   function ensure() {
     if (context) return true;
     try {
@@ -31,7 +43,7 @@ export function createAudio() {
       if (!Ctor) return false;
       context = new Ctor();
       master = context.createGain();
-      master.gain.value = 0.5;
+      master.gain.value = muted ? 0 : 0.5;
       master.connect(context.destination);
       noise = makeNoiseBuffer(context);
       engineOsc = context.createOscillator();
@@ -111,8 +123,9 @@ export function createAudio() {
       engineGain.gain.value = speedRatio * 0.10;
       engineOsc.frequency.value = 55 + speedRatio * 130;
     },
-    /** Two-tone police wail; call every frame with wanted >= 1 and police near. */
-    siren(on, dt) {
+    /** Two-tone police wail; call every frame with wanted >= 1 and police near.
+     * `distance` (px, optional) fades the wail: close police are loud, far ones faint. */
+    siren(on, dt, distance = 0) {
       if (!context) return;
       if (!on || muted) {
         sirenGain.gain.value = 0;
@@ -121,8 +134,11 @@ export function createAudio() {
       sirenTimer += dt;
       const up = Math.floor(sirenTimer / 0.45) % 2 === 0;
       sirenOsc.frequency.value = up ? 720 : 540;
-      sirenGain.gain.value = 0.045;
+      const fade = Math.max(0.25, 1 - distance / 1400);
+      sirenGain.gain.value = 0.045 * fade;
     },
+    /** A short traffic horn: two quick square blips. */
+    honk() { blip(340, 0.09, 'square', 0.12); setTimeout(() => blip(340, 0.12, 'square', 0.12), 110); },
     shoot() { blip(220, 0.12, 'square', 0.22, 60); burst(0.09, 2400, 0.25); },
     punch() { burst(0.08, 500, 0.3); blip(90, 0.08, 'sine', 0.25, 50); },
     crash() { burst(0.25, 900, 0.4); },
@@ -139,6 +155,11 @@ export function createAudio() {
     setMuted(value) {
       muted = value;
       if (master) master.gain.value = muted ? 0 : 0.5;
+      try {
+        window.localStorage.setItem(MUTE_KEY, muted ? '1' : '0');
+      } catch {
+        // Mute still applies for this visit when storage is off.
+      }
     },
     isMuted() { return muted; },
   };

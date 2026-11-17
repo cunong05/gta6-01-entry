@@ -18,17 +18,17 @@ kabur dari polisi, rampok Bank Pelabuhan, sampai showdown terakhir di dermaga.
 
 ## Yang ada di game
 
-- **Kota multi-distrik** (Pelabuhan, Downtown, Pantai Coral, Suburb) dijelajahi jalan kaki + mobil
-- **Traffic AI** — mobil ikut jalan, berhenti di lampu merah; pejalan kaki di trotoar
-- **Curi mobil** (E di dekat mobil) + mengemudi dengan kamera mengikuti
-- **Wanted level 0–5 bintang** — polisi mobil + jalan kaki mengejar, makin agresif per bintang
+- **Kota multi-distrik** (Pelabuhan, Downtown, Pantai Coral, Suburb) dijelajahi jalan kaki + mobil — plus Plaza Solmar dengan air mancur di tengah Downtown
+- **Traffic AI** — mobil ikut jalan, berhenti di lampu merah (dan melambat saat lampu kuning), klakson kalau macet; pejalan kaki di trotoar, kadang berhenti mengobrol
+- **Curi mobil** (E di dekat mobil) + mengemudi dengan kamera mengikuti, skid mark saat nge-drift
+- **Wanted level 0–5 bintang** — polisi mobil + jalan kaki mengejar, makin agresif per bintang; di bintang 4+ polisi memotong jalan dari depan; sirene melemah dengan jarak
 - **Spray Shop** — bayar tunai untuk hapus bintang wanted
-- **6 misi cerita berantai** — marker, dialog, hadiah $ (total $3.100)
-- **Combat** — pukul (Spasi) + pistol (klik mouse, ammo terbatas)
-- **HUD lengkap** — uang, nyawa, wanted stars, senjata/ammo, objektif misi, minimap
-- **Start screen, pause, game over + restart, save via localStorage**
-- **Suara WebAudio synth** — mesin, sirene, tembakan, pickup (tanpa file audio)
-- **Polish** — siklus siang/senja/malam, lampu jalan menyala, partikel, skid mark
+- **6 misi cerita berantai** — marker, dialog, progress bar per tahap, hadiah $ (total $3.100)
+- **Combat** — pukul (Spasi, ada knockback) + pistol (klik mouse, ammo terbatas, tracer peluru)
+- **HUD lengkap** — uang, nyawa (denyut merah saat kritis), wanted stars, senjata/ammo, objektif misi + progress bar, minimap (marker misi, polisi, Marco, kompas N)
+- **Start screen, pause, game over + restart (Enter/R), save via localStorage** (berversi — save lama diabaikan, bukan salah baca)
+- **Suara WebAudio synth** — mesin, sirene, tembakan, klakson, pickup (tanpa file audio); mute tersimpan
+- **Polish** — siklus siang/senja/malam, lampu jalan + cone lampu depan mobil saat malam, partikel, pickup yang muncul lagi
 
 ## Cara main
 
@@ -41,12 +41,25 @@ node serve.ts
 | --- | --- |
 | WASD / panah | Jalan kaki / mengemudi |
 | E | Curi mobil / keluar mobil |
-| Klik mouse | Tembak pistol |
+| Klik mouse | Tembak pistol (drive-by dari mobil) |
 | Spasi | Pukul |
-| 1 / 2 | Ganti senjata |
+| 1 / 2 / Q | Ganti senjata |
 | P / Esc | Jeda |
 | M | Suara on/off |
-| Enter | Mulai / lanjut |
+| Enter / R | Mulai / main lagi |
+| N | Cerita baru dari awal (di title) |
+
+## Screenshot
+
+Empat screenshot diambil dari game yang sedang berjalan
+(`?shot=chase|downtown|mission|start&seed=1`):
+
+| File | Isi |
+| --- | --- |
+| `1-chase.jpg` (cover) | Kejar-kejaran mobil, 3 bintang wanted, polisi di belakang |
+| `2-downtown.jpg` | Jalan kaki di Downtown, traffic + pejalan kaki + HUD lengkap |
+| `3-mission.jpg` | Misi 1 berjalan — marker + dialog Mama Rosa |
+| `4-start.jpg` | Title screen di atas kota yang hidup |
 
 ## Struktur source
 
@@ -54,26 +67,25 @@ node serve.ts
 
 | File | Tugas |
 | --- | --- |
-| `config.js` | Semua angka tuning, warna & data 6 misi |
+| `config.js` | Semua angka tuning, warna, tabel difficulty polisi & data 6 misi |
 | `random.js` | RNG seeded (mulberry32) |
-| `input.js` | Keyboard + mouse |
-| `audio.js` | Suara synth WebAudio |
-| `city.js` | Grid kota, distrik, bangunan, lampu |
-| `vehicles.js` | Fisika mobil + traffic AI |
-| `pedestrians.js` | Pejalan kaki |
-| `police.js` | Wanted level + polisi |
-| `missions.js` | Mesin 6 misi cerita |
-| `combat.js` | Pistol, pukul, pickup |
-| `hud.js` | HUD (uang, nyawa, bintang, objektif) |
-| `minimap.js` | Minimap kota |
-| `render.js` | Renderer + semua layar |
-| `world.js` | State game + satu fixed step |
+| `input.js` | Keyboard + mouse (termasuk R restart, blokir klik kanan) |
+| `audio.js` | Suara synth WebAudio (sirene berjarak, klakson, mute tersimpan) |
+| `city.js` | Grid kota, distrik, bangunan, plaza, lampu |
+| `vehicles.js` | Fisika mobil + traffic AI (lampu kuning, klakson) |
+| `pedestrians.js` | Pejalan kaki (jalan, jeda mengobrol, kabur) |
+| `police.js` | Wanted level + polisi (pincer di bintang 4+) |
+| `missions.js` | Mesin 6 misi cerita + progress tiap tahap |
+| `combat.js` | Pistol, pukul (knockback), tracer, pickup |
+| `hud.js` | HUD (uang, nyawa, bintang, objektif + progress bar) |
+| `minimap.js` | Minimap kota (marker, polisi, Marco, kompas) |
+| `render.js` | Renderer + semua layar (lampu depan, tracer, lampu lalu lintas) |
+| `world.js` | State game + satu fixed step (respawn pickup, save berversi) |
 | `shots.js` | 4 scene screenshot (autopilot) |
 | `main.js` | Boot + loop utama |
 
 Game statis murni: vanilla JS tanpa library luar, tanpa network request,
-playable offline di desktop Chrome. Screenshot diambil dari game yang sedang
-berjalan (`?shot=chase|downtown|mission|start&seed=1`).
+playable offline di desktop Chrome.
 
 ## Lisensi
 

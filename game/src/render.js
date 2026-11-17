@@ -1,8 +1,14 @@
 // The renderer: paints the city, everything in it, the day-night tint, the HUD,
 // the minimap and the four screens (title, play, paused, game over). It owns the
 // canvas and the camera scale, and nothing else owns drawing.
+//
+// Revision notes (this session): headlight cones for the player's and police cars
+// after dark, tracer lines for bullets (from their previous position), the Downtown
+// plaza with its fountain, and small red/green traffic-light dots at intersections
+// so the light state is visible in the world, not just felt.
+
 import { FONT, PALETTE, ROADS, WORLD } from './config.js';
-import { currentStage } from './missions.js';
+import { currentStage, totalRewards } from './missions.js';
 import { drawHUD } from './hud.js';
 import { drawMinimap } from './minimap.js';
 
@@ -61,6 +67,22 @@ export function createRenderer(canvas) {
       if (park.x > x1 || park.x + park.w < x0 || park.y > y1 || park.y + park.h < y0) continue;
       ctx.fillRect(park.x, park.y, park.w, park.h);
     }
+    // Plazas (paved squares) with a fountain in the middle.
+    for (const plaza of city.plazas) {
+      if (plaza.x > x1 || plaza.x + plaza.w < x0 || plaza.y > y1 || plaza.y + plaza.h < y0) continue;
+      ctx.fillStyle = PALETTE.plaza;
+      ctx.fillRect(plaza.x, plaza.y, plaza.w, plaza.h);
+      const fx = plaza.x + plaza.w / 2;
+      const fy = plaza.y + plaza.h / 2;
+      ctx.fillStyle = '#7a8a94';
+      ctx.beginPath();
+      ctx.arc(fx, fy, 26, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#4a9ec9';
+      ctx.beginPath();
+      ctx.arc(fx, fy, 19, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   function drawRoads(state, view) {
@@ -113,6 +135,23 @@ export function createRenderer(canvas) {
           ctx.fillRect(ax + i * 16 - 5, sy + half - 4, 10, 8);
         }
       }
+    }
+  }
+
+  /** A red/green dot at each visible intersection showing the light state. */
+  function drawTrafficLights(state, view) {
+    const nsGreen = state.city.lightState(state.time) === 'ns';
+    for (const light of state.city.lights) {
+      if (light.x < view.x0 || light.x > view.x1 || light.y < view.y0 || light.y > view.y1) continue;
+      // Phase 0 lights follow the global cycle, phase 1 the opposite.
+      const green = light.phase === 0 ? nsGreen : !nsGreen;
+      ctx.fillStyle = green ? '#3fd06a' : '#ff4d3d';
+      ctx.beginPath();
+      ctx.arc(light.x + ROADS.width / 2 + 6, light.y - ROADS.width / 2 - 6, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
     }
   }
 
@@ -193,6 +232,25 @@ export function createRenderer(canvas) {
       ctx.stroke();
     }
     ctx.globalAlpha = 1;
+  }
+
+  /** A pale cone of light ahead of a car, drawn only after dark. */
+  function drawHeadlight(car) {
+    ctx.save();
+    ctx.translate(car.x, car.y);
+    ctx.rotate(car.angle);
+    const grad = ctx.createLinearGradient(23, 0, 170, 0);
+    grad.addColorStop(0, 'rgba(255,240,180,0.30)');
+    grad.addColorStop(1, 'rgba(255,240,180,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(23, -8);
+    ctx.lineTo(170, -46);
+    ctx.lineTo(170, 46);
+    ctx.lineTo(23, 8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
   }
 
   function drawCarShape(car, isPlayer) {
@@ -303,6 +361,7 @@ export function createRenderer(canvas) {
 
     drawGround(state, view);
     drawRoads(state, view);
+    drawTrafficLights(state, view);
     drawBuildings(state, view);
     drawSprayShop(state, view);
     drawSkids(state);
@@ -377,8 +436,14 @@ export function createRenderer(canvas) {
       ctx.font = '700 9px system-ui, sans-serif';
       ctx.fillText('RICO', player.x - 13, player.y - 18);
     }
-    // Bullets.
+    // Bullets: a tracer line from the previous position, then the glowing head.
     for (const bullet of state.combat.bullets) {
+      ctx.strokeStyle = 'rgba(255,210,63,0.8)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(bullet.prevX ?? bullet.x, bullet.prevY ?? bullet.y);
+      ctx.lineTo(bullet.x, bullet.y);
+      ctx.stroke();
       ctx.fillStyle = '#ffd23f';
       ctx.beginPath();
       ctx.arc(bullet.x, bullet.y, 3, 0, Math.PI * 2);
@@ -391,8 +456,15 @@ export function createRenderer(canvas) {
       ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
     }
     ctx.globalAlpha = 1;
-    // Lamps and palms (glow pass on top).
+    // Headlight cones after dark, for the player's car and the police cars.
     const night = daylight(state.dayTime).light < 0.6;
+    if (night) {
+      if (player.inCar) drawHeadlight(player.inCar);
+      for (const car of state.police.cars) {
+        if (car.active) drawHeadlight(car);
+      }
+    }
+    // Lamps and palms (glow pass on top).
     drawLampsAndPalms(state, view, night);
 
     ctx.restore();
@@ -474,7 +546,7 @@ export function createRenderer(canvas) {
     ctx.fillText('Mama Rosa tidak akan membiarkanmu begitu saja. Bangkit dan coba lagi.', w / 2, h * 0.52);
     ctx.fillStyle = '#fff';
     ctx.font = `700 20px ${FONT}`;
-    ctx.fillText('ENTER — Main lagi', w / 2, h * 0.62);
+    ctx.fillText('ENTER atau R — Main lagi', w / 2, h * 0.62);
     ctx.textAlign = 'left';
   }
 
@@ -490,7 +562,7 @@ export function createRenderer(canvas) {
     ctx.font = `17px ${FONT}`;
     ctx.fillText('Rico menatap matahari terbenam di Teluk Solmar. Uang kas kembali,', w / 2, h * 0.42);
     ctx.fillText('Marco kabur, dan Mama Rosa sudah menyiapkan makan malam.', w / 2, h * 0.46);
-    ctx.fillText('Total hadiah misi: $3.100   •   Uang akhir: $' + Math.floor(state.player.money), w / 2, h * 0.54);
+    ctx.fillText(`Total hadiah misi: $${totalRewards().toLocaleString('en-US')}   •   Uang akhir: $${Math.floor(state.player.money)}`, w / 2, h * 0.54);
     ctx.fillStyle = PALETTE.muted;
     ctx.font = `15px ${FONT}`;
     ctx.fillText('Solmar Bay tetap milik mereka. Terima kasih sudah bermain!', w / 2, h * 0.60);

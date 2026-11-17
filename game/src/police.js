@@ -3,7 +3,13 @@
 // hit. Police cars chase and ram; foot cops run the player down on foot. The heat
 // cools slowly when no crime happens out of sight, and the Spray Shop clears it
 // at once — for cash.
-import { CAR, POLICE, WANTED, WORLD } from './config.js';
+//
+// Revision notes (this session): police speed, ram cooldown and foot-cop speed now
+// come from the DIFFICULTY table in config.js instead of hard-coded numbers; at
+// wanted 4+ one police car spawns ahead of the player's heading (a pincer, not just
+// a tail chase); and nearestPoliceDist is kept so the siren can fade with distance.
+
+import { CAR, DIFFICULTY, POLICE, WANTED, WORLD } from './config.js';
 import { createCar } from './vehicles.js';
 
 function angleDiff(a, b) {
@@ -21,6 +27,7 @@ export function createPolice() {
     decayTimer: 0,
     spawnTimer: 0,
     sirenNear: false,
+    nearestPoliceDist: Infinity,
   };
 }
 
@@ -50,9 +57,19 @@ function spawnPointNear(player, random, distance) {
   return { x, y };
 }
 
+/** A point ahead of the player's heading: where a pincer car cuts the player off. */
+function spawnPointAhead(player, distance) {
+  const a = player.angle;
+  let x = player.x + Math.cos(a) * distance;
+  let y = player.y + Math.sin(a) * distance;
+  x = Math.max(180, Math.min(WORLD.width - 60, x));
+  y = Math.max(40, Math.min(WORLD.height - 40, y));
+  return { x, y };
+}
+
 /** A foot cop: runs at the player and punches when close. */
-function createCop(x, y) {
-  return { x, y, speed: 235, hp: 50, punchTimer: 0, active: true };
+function createCop(x, y, wanted) {
+  return { x, y, speed: DIFFICULTY.copSpeed[wanted] || 235, hp: 50, punchTimer: 0, active: true };
 }
 
 /** Spawn and steer the police for this wanted level. */
@@ -65,6 +82,7 @@ export function updatePolice(police, state, dt, random) {
   // Cool down: no crime and no police close by for a while drops a star.
   if (wanted > 0) {
     const nearest = nearestPoliceDistance(police, player);
+    police.nearestPoliceDist = nearest;
     if (nearest > 420) {
       police.decayTimer += dt;
       if (police.decayTimer >= WANTED.decaySeconds) {
@@ -74,6 +92,8 @@ export function updatePolice(police, state, dt, random) {
     } else {
       police.decayTimer = 0;
     }
+  } else {
+    police.nearestPoliceDist = Infinity;
   }
 
   // Spawn to fill the force, a little at a time so they arrive in waves.
@@ -81,13 +101,17 @@ export function updatePolice(police, state, dt, random) {
   if (police.spawnTimer <= 0) {
     police.spawnTimer = 1.2;
     if (police.cars.length < force.cars) {
-      const p = spawnPointNear(player, random, POLICE.spawnDistance);
+      // At 4+ stars the first car of a wave cuts the player off from the front.
+      const pincer = wanted >= 4 && police.cars.length === 0;
+      const p = pincer
+        ? spawnPointAhead(player, POLICE.spawnDistance)
+        : spawnPointNear(player, random, POLICE.spawnDistance);
       const car = createCar('police', p.x, p.y, Math.atan2(player.y - p.y, player.x - p.x), '#2f6fd0');
       car.speed = 200;
       police.cars.push(car);
     } else if (police.cops.length < force.cops && !player.inCar) {
       const p = spawnPointNear(player, random, POLICE.spawnDistance * 0.7);
-      police.cops.push(createCop(p.x, p.y));
+      police.cops.push(createCop(p.x, p.y, wanted));
     }
   }
 
@@ -97,7 +121,7 @@ export function updatePolice(police, state, dt, random) {
     const target = Math.atan2(player.y - car.y, player.x - car.x);
     const turn = Math.max(-3.2 * dt, Math.min(3.2 * dt, angleDiff(car.angle, target)));
     car.angle += turn;
-    const maxSpeed = Math.min(500, 380 + wanted * 30);
+    const maxSpeed = Math.min(CAR.policeMaxSpeed, DIFFICULTY.policeSpeed[wanted] || 380);
     car.speed += Math.max(-500 * dt, Math.min(420 * dt, maxSpeed - car.speed));
     car.x += Math.cos(car.angle) * car.speed * dt;
     car.y += Math.sin(car.angle) * car.speed * dt;
@@ -110,8 +134,8 @@ export function updatePolice(police, state, dt, random) {
     const dist = Math.hypot(player.x - car.x, player.y - car.y);
     if (dist < CAR.radius + (player.inCar ? CAR.radius : 16)) {
       if (car.ramTimer <= 0) {
-        car.ramTimer = 1.2;
-        state.damagePlayer(5, 'polisi');
+        car.ramTimer = DIFFICULTY.ramCooldown[wanted] || 1.2;
+        state.damagePlayer(POLICE.ramDamage, 'polisi');
         if (player.inCar) {
           player.inCar.speed *= 0.9;
           player.inCar.x += Math.cos(car.angle) * 24;
