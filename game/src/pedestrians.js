@@ -1,109 +1,168 @@
-// Pedestrians: walkers on the sidewalks who stroll the grid, cross at intersections
-// and run from gunfire or a car bearing down on them. They are the city breathing.
-//
-// Revision notes (this session): walkers now pause now and then — standing still to
-// look around or chat — instead of marching forever, and spawn points are checked
-// with city.isSidewalk() so nobody starts inside a building or on the asphalt.
+// Solmar Bay — pedestrians: ordinary people walking the sidewalks, who stop
+// to chat, cross at the corners, and run away from gunfire and speeding cars.
 
-import { PEDS, ROADS, WORLD } from './config.js';
+import { WORLD_W, WORLD_H, V_ROADS, H_ROADS, ROAD_HALF } from './config.js';
+import { createRandom } from './random.js';
+import { collideBuildings } from './city.js';
 
-const SHIRTS = ['#e8e0d0', '#d05a4a', '#4a7ad0', '#e8c94a', '#7ad04a', '#c94ad0', '#4ad0c9', '#e8a04a'];
-const SKINS = ['#e8b88a', '#c98a5a', '#8a5a3a', '#f0c8a0', '#a06a42'];
+const SHIRT_COLORS = ['#d96a4f', '#4f8fc9', '#7ab648', '#c9a24f', '#8a5fc9', '#e0e0d8', '#4fc9b8', '#c95f8a'];
+const SKIN_COLORS = ['#e8b98a', '#c98a5a', '#8a5a34', '#f0cba0', '#6b4226'];
 
-/** A walker: strolls along sidewalk lines; dir 0 east, 1 south, 2 west, 3 north. */
-export function createPedestrian(random, x, y) {
+export function makePedestrian(rand, x, y) {
   return {
     x, y,
-    dir: Math.floor(random() * 4),
-    speed: PEDS.speed * (0.8 + random() * 0.5),
-    shirt: SHIRTS[Math.floor(random() * SHIRTS.length)],
-    skin: SKINS[Math.floor(random() * SKINS.length)],
-    flee: 0,
-    fleeX: 0,
-    fleeY: 0,
-    walkPhase: random() * Math.PI * 2,
-    idle: 0, // seconds left standing still (chatting / looking around)
-    active: true,
+    angle: rand() * Math.PI * 2,
+    speed: 34 + rand() * 30,
+    shirt: SHIRT_COLORS[Math.floor(rand() * SHIRT_COLORS.length)],
+    skin: SKIN_COLORS[Math.floor(rand() * SKIN_COLORS.length)],
+    walkPhase: rand() * Math.PI * 2,
+    // Behaviour: 'walk' along a road, 'idle' chatting, 'flee' from danger.
+    state: 'walk',
+    stateTimer: 4 + rand() * 8,
+    axis: rand() < 0.5 ? 'v' : 'h',
+    dir: rand() < 0.5 ? 1 : -1,
+    road: 0,
+    panic: 0,
   };
 }
 
-function nearestRoadLine(value, lines) {
-  let best = lines[0];
-  for (const line of lines) if (Math.abs(line - value) < Math.abs(best - value)) best = line;
-  return best;
+// Spawn a pedestrian on a sidewalk beside a random road.
+export function spawnPedestrian(rand) {
+  const vertical = rand() < 0.5;
+  let x, y;
+  if (vertical) {
+    const road = V_ROADS[Math.floor(rand() * V_ROADS.length)];
+    x = road + (rand() < 0.5 ? ROAD_HALF + 10 : -(ROAD_HALF + 10));
+    y = rand() * WORLD_H;
+  } else {
+    const road = H_ROADS[Math.floor(rand() * H_ROADS.length)];
+    y = road + (rand() < 0.5 ? ROAD_HALF + 10 : -(ROAD_HALF + 10));
+    x = rand() * WORLD_W;
+  }
+  const ped = makePedestrian(rand, x, y);
+  ped.axis = vertical ? 'v' : 'h';
+  ped.road = vertical ? x : y;
+  return ped;
 }
 
-export function spawnPedestrians(city, random, count, avoidX, avoidY) {
-  const peds = [];
-  let guard = 0;
-  while (peds.length < count && guard < count * 30) {
-    guard += 1;
-    const vertical = random() < 0.5;
-    const road = vertical
-      ? ROADS.avenues[Math.floor(random() * ROADS.avenues.length)]
-      : ROADS.streets[Math.floor(random() * ROADS.streets.length)];
-    const along = 100 + random() * (vertical ? WORLD.height - 200 : WORLD.width - 200);
-    const side = (random() < 0.5 ? -1 : 1) * (ROADS.width / 2 + ROADS.sidewalk / 2);
-    const x = vertical ? road + side : along;
-    const y = vertical ? along : road + side;
-    if (Math.hypot(x - avoidX, y - avoidY) < 260) continue;
-    if (city.isWater(x, y)) continue;
-    if (!city.isSidewalk(x, y)) continue;
-    peds.push(createPedestrian(random, x, y));
+export function spawnPedestrians(world, count) {
+  const rand = createRandom(world.seed + 131);
+  for (let i = 0; i < count; i++) {
+    const ped = spawnPedestrian(rand);
+    if (Math.hypot(ped.x - world.player.x, ped.y - world.player.y) < 180) continue;
+    world.peds.push(ped);
   }
-  return peds;
 }
 
-/** One walker: follow the sidewalk, turn at intersections, flee danger. */
-export function updatePedestrian(ped, city, dt, random, danger) {
-  if (!ped.active) return;
-  ped.walkPhase += dt * 8;
-  let dir = ped.dir;
-  let speed = ped.speed;
-  if (danger && Math.hypot(danger.x - ped.x, danger.y - ped.y) < danger.radius) {
-    ped.flee = 1.2;
-    ped.fleeX = danger.x;
-    ped.fleeY = danger.y;
+export function updatePedestrians(world, dt) {
+  const { player, playerCar } = world;
+  for (const ped of world.peds) {
+    ped.stateTimer -= dt;
+    ped.walkPhase += dt * (ped.state === 'walk' ? 8 : 2);
+
+    // Danger: gunshots, a speeding car, or a nearby fight make people run.
+    const threat = nearestThreat(world, ped);
+    if (threat && ped.state !== 'flee') {
+      ped.state = 'flee';
+      ped.stateTimer = 2.5;
+      ped.panic = 1;
+      // Run directly away from the threat.
+      ped.angle = Math.atan2(ped.y - threat.y, ped.x - threat.x);
+    }
+
+    if (ped.state === 'flee') {
+      const speed = 210;
+      ped.x += Math.cos(ped.angle) * speed * dt;
+      ped.y += Math.sin(ped.angle) * speed * dt;
+      if (ped.stateTimer <= 0) {
+        ped.state = 'walk';
+        ped.stateTimer = 4 + world.rand() * 6;
+        // Resume walking along the nearest road.
+        const vertical = world.rand() < 0.5;
+        ped.axis = vertical ? 'v' : 'h';
+        ped.dir = world.rand() < 0.5 ? 1 : -1;
+        ped.angle = vertical ? (ped.dir === 1 ? Math.PI / 2 : -Math.PI / 2) : (ped.dir === 1 ? 0 : Math.PI);
+      }
+    } else if (ped.state === 'walk') {
+      const speed = ped.speed;
+      if (ped.axis === 'v') {
+        ped.y += ped.dir * speed * dt;
+        ped.angle = ped.dir === 1 ? Math.PI / 2 : -Math.PI / 2;
+        if (ped.y < 60 || ped.y > WORLD_H - 60) ped.dir *= -1;
+        // At an intersection, sometimes turn onto the crossing road.
+        if (ped.stateTimer <= 0 && nearIntersection(ped.x, ped.y)) {
+          ped.axis = 'h';
+          ped.dir = world.rand() < 0.5 ? 1 : -1;
+          ped.stateTimer = 6 + world.rand() * 8;
+        }
+      } else {
+        ped.x += ped.dir * speed * dt;
+        ped.angle = ped.dir === 1 ? 0 : Math.PI;
+        if (ped.x < 60 || ped.x > WORLD_W - 60) ped.dir *= -1;
+        if (ped.stateTimer <= 0 && nearIntersection(ped.x, ped.y)) {
+          ped.axis = 'v';
+          ped.dir = world.rand() < 0.5 ? 1 : -1;
+          ped.stateTimer = 6 + world.rand() * 8;
+        }
+      }
+      // Occasionally stop to idle for a moment.
+      if (ped.stateTimer <= 0 && world.rand() < 0.25) {
+        ped.state = 'idle';
+        ped.stateTimer = 2 + world.rand() * 4;
+      }
+    } else if (ped.state === 'idle') {
+      if (ped.stateTimer <= 0) {
+        ped.state = 'walk';
+        ped.stateTimer = 5 + world.rand() * 7;
+      }
+    }
+
+    // Keep pedestrians out of buildings and water.
+    collideBuildings(ped, 12, world.city.buildings);
+    ped.x = Math.max(20, Math.min(WORLD_W - 20, ped.x));
+    ped.y = Math.max(20, Math.min(WORLD_H - 20, ped.y));
+
+    // A fast car hitting a pedestrian knocks them down: a crime, and a scene.
+    if (playerCar && Math.abs(playerCar.speed) > 90) {
+      const d = Math.hypot(ped.x - playerCar.x, ped.y - playerCar.y);
+      if (d < 30) {
+        world.hitPedestrian(ped);
+      }
+    }
   }
-  if (ped.flee > 0) {
-    ped.flee -= dt;
-    const away = Math.atan2(ped.y - ped.fleeY, ped.x - ped.fleeX);
-    ped.x += Math.cos(away) * ped.speed * 2.4 * dt;
-    ped.y += Math.sin(away) * ped.speed * 2.4 * dt;
-    ped.dir = Math.abs(Math.cos(away)) > Math.abs(Math.sin(away))
-      ? (Math.cos(away) > 0 ? 0 : 2)
-      : (Math.sin(away) > 0 ? 1 : 3);
-    city.clampWorld(ped, 10);
-    return;
+
+  // Keep the sidewalks populated near the player.
+  if (world.peds.length < world.pedTarget) {
+    world.peds.push(spawnPedestrian(world.rand));
   }
-  // Idle pause: sometimes stop for a few seconds, then carry on.
-  if (ped.idle > 0) {
-    ped.idle -= dt;
-    return;
+}
+
+function nearIntersection(x, y) {
+  for (const vx of V_ROADS) {
+    for (const hy of H_ROADS) {
+      if (Math.abs(x - vx) < 70 && Math.abs(y - hy) < 70) return true;
+    }
   }
-  if (random() < 0.0015) {
-    ped.idle = 2 + random() * 3;
-    return;
+  return false;
+}
+
+// The nearest thing a pedestrian should run from, or null.
+function nearestThreat(world, ped) {
+  const { player, playerCar } = world;
+  // Recent gunfire.
+  if (world.lastShotAt && world.time - world.lastShotAt < 1.2) {
+    const d = Math.hypot(ped.x - world.lastShotX, ped.y - world.lastShotY);
+    if (d < 320) return { x: world.lastShotX, y: world.lastShotY };
   }
-  const dirs = [
-    { dx: 1, dy: 0 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }, { dx: 0, dy: -1 },
-  ];
-  const d = dirs[dir];
-  ped.x += d.dx * speed * dt;
-  ped.y += d.dy * speed * dt;
-  // At an intersection, sometimes turn; at the city edge, turn back.
-  const onAvenue = ROADS.avenues.some((ax) => Math.abs(ped.x - ax) < 14);
-  const onStreet = ROADS.streets.some((sy) => Math.abs(ped.y - sy) < 14);
-  if ((dir === 0 || dir === 2) && onAvenue && random() < 0.02) {
-    ped.dir = random() < 0.5 ? 1 : 3;
-    ped.y = nearestRoadLine(ped.y, ROADS.streets) + (ped.dir === 1 ? 1 : -1) * (ROADS.width / 2 + ROADS.sidewalk / 2);
-  } else if ((dir === 1 || dir === 3) && onStreet && random() < 0.02) {
-    ped.dir = random() < 0.5 ? 0 : 2;
-    ped.x = nearestRoadLine(ped.x, ROADS.avenues) + (ped.dir === 0 ? 1 : -1) * (ROADS.width / 2 + ROADS.sidewalk / 2);
+  // A speeding car bearing down.
+  if (playerCar && Math.abs(playerCar.speed) > 120) {
+    const d = Math.hypot(ped.x - playerCar.x, ped.y - playerCar.y);
+    if (d < 130) return { x: playerCar.x, y: playerCar.y };
   }
-  if (ped.x < 180) ped.dir = 0;
-  if (ped.x > WORLD.width - 60) ped.dir = 2;
-  if (ped.y < 30) ped.dir = 1;
-  if (ped.y > WORLD.height - 30) ped.dir = 3;
-  city.clampWorld(ped, 10);
+  // The player swinging fists.
+  if (player && player.attacking) {
+    const d = Math.hypot(ped.x - player.x, ped.y - player.y);
+    if (d < 90) return { x: player.x, y: player.y };
+  }
+  return null;
 }

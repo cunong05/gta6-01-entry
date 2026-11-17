@@ -1,1 +1,1 @@
-[{"name":"1-chase.jpg","query":"?shot=chase&seed=1"},{"name":"2-downtown.jpg","query":"?shot=downtown&seed=1"},{"name":"3-mission.jpg","query":"?shot=mission&seed=1"},{"name":"4-start.jpg","query":"?shot=start&seed=1"}]
+{"shots":[{"file":"1-chase.jpg","seed":1,"shot":"chase"},{"file":"2-downtown.jpg","seed":1,"shot":"downtown"},{"file":"3-mission.jpg","seed":1,"shot":"mission"},{"file":"4-start.jpg","seed":1,"shot":"start"}]}

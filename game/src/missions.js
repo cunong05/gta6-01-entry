@@ -1,221 +1,279 @@
-// The story: six chained missions for Rico Vega, from Mama Rosa's first package to
-// the showdown at the docks. Each mission is stages of goto / wait / survive / chase
-// / kill; this file owns the stage machine, the dialog lines and the payouts, and
-// the world owns the player, the cars and the guards it asks for.
-//
-// Revision notes (this session): objectiveProgress() reports how far the current
-// stage is (0..1) so the HUD can draw a progress bar for wait / survive / kill
-// stages, and totalRewards() sums the story's payouts for the end screen.
+// Solmar Bay — the story: six chained missions from Mama Rosa, each with a
+// marker on the map, a short dialogue, and a cash reward. Rico Vega, a
+// freelance driver, works his way up from courier runs to the big score.
 
-import { MISSIONS } from './config.js';
-import { ROADS } from './config.js';
+import {
+  ROSAS_PLACE, HARBOR_PIER, BANK, GARAGE, SAFEHOUSE, SPRAY_SHOP,
+} from './config.js';
+import { spawnEnemy } from './combat.js';
+import { addHeat } from './police.js';
 
-export const MISSION_STAGE = 1;
-export const MISSION_DONE = 2;
-export const STORY_DONE = 4;
+export const MISSIONS = [
+  {
+    id: 0,
+    title: 'First Delivery',
+    giver: 'Mama Rosa',
+    intro: [
+      'Mama Rosa: Rico, mijo. A package needs to reach the old pier before sunset.',
+      'Mama Rosa: No questions, no peeking. Drive careful — the harbour road is rough.',
+      'Rico: On it. One package, no questions. Just like old times.',
+    ],
+    outro: [
+      'Dockhand: Rosa sends her regards. Here is your cut.',
+      'Mama Rosa: See? Easy money. I have more work if you want it.',
+    ],
+    reward: 150,
+    objective: 'Deliver the package to the old pier',
+  },
+  {
+    id: 1,
+    title: 'The Pickup',
+    giver: 'Mama Rosa',
+    intro: [
+      'Mama Rosa: My nephew Tico is waiting at the pier. He needs a ride downtown.',
+      'Mama Rosa: He is carrying something fragile. Do NOT hit anything. Capisce?',
+      'Rico: Tico, fragile cargo, downtown. Got it.',
+    ],
+    outro: [
+      'Tico: You drive like my abuela, but we made it in one piece. Thanks, Rico!',
+      'Mama Rosa: Good. The downtown crew noticed. They want a driver.',
+    ],
+    reward: 250,
+    objective: 'Pick up Tico at the pier, then drive him downtown',
+  },
+  {
+    id: 2,
+    title: 'Hot Wheels',
+    giver: 'Mama Rosa',
+    intro: [
+      'Mama Rosa: A gold sportscar is parked by the chop garage. It belongs to nobody now.',
+      'Mama Rosa: Bring it to the garage and the boys will pay you well. Quietly.',
+      'Rico: A gold sportscar, no owner, good money. I like this job already.',
+    ],
+    outro: [
+      'Garage Boss: Clean title? Never mind. Here is your cut, driver.',
+      'Mama Rosa: You are moving up, Rico. But the cops are watching now.',
+    ],
+    reward: 400,
+    objective: 'Steal the gold sportscar and deliver it to the Chop Garage',
+  },
+  {
+    id: 3,
+    title: 'Heat on the Street',
+    giver: 'Mama Rosa',
+    intro: [
+      'Mama Rosa: The police put your face on the board, Rico. Three stars!',
+      'Mama Rosa: Get to the Spray Shop on Coral Avenue. New paint, new car, clean slate.',
+      'Rico: Three stars and a paint job. Time to disappear.',
+    ],
+    outro: [
+      'Spray Shop: Fresh coat, fresh plates. Even your mother would not know this car.',
+      'Mama Rosa: See? In Solmar Bay, every problem has a price tag.',
+    ],
+    reward: 500,
+    objective: 'Lose the cops — repaint the car at the Spray Shop',
+  },
+  {
+    id: 4,
+    title: 'Dockside Trouble',
+    giver: 'Mama Rosa',
+    intro: [
+      'Mama Rosa: The harbour crew is shaking down my fishermen. Three of them, armed.',
+      'Mama Rosa: Take your pistol. Send them home — or send them swimming.',
+      'Rico: Dockside trouble? I will handle it.',
+    ],
+    outro: [
+      'Fisherman: You saved our boats, Rico. The harbour owes you one.',
+      'Mama Rosa: One last job, mijo. The big one. Are you ready?',
+    ],
+    reward: 700,
+    objective: 'Deal with the three armed thugs at the docks',
+  },
+  {
+    id: 5,
+    title: 'The Big Score',
+    giver: 'Mama Rosa',
+    intro: [
+      'Mama Rosa: The Solmar Bay Bank moves its cash at noon. One van, one driver.',
+      'Mama Rosa: Grab the cash, lose the heat, and bring it home to the safehouse.',
+      'Rico: The bank, the cash, the safehouse. Let us finish this.',
+    ],
+    outro: [
+      'Rico: We did it. The whole bay is talking about us tonight.',
+      'Mama Rosa: You are a legend now, mijo. Solmar Bay is yours.',
+    ],
+    reward: 1500,
+    objective: 'Grab the bank cash, then escape to the safehouse',
+  },
+];
 
-const DIALOG_TIME = 5;
-
-export function createMissions() {
-  return {
-    index: 0,
-    stage: 0,
-    stageTimer: 0,
-    stageProgress: 0,
-    dialog: null,
-    dialogTimer: 0,
-    done: false,
-    targetCar: null,
-    guards: [],
-    kills: 0,
-    started: false,
-  };
+export function missionCount() {
+  return MISSIONS.length;
 }
 
-export function currentMission(missions) {
-  return missions.index < MISSIONS.length ? MISSIONS[missions.index] : null;
+export function currentMission(world) {
+  if (world.missionIndex >= MISSIONS.length) return null;
+  return MISSIONS[world.missionIndex];
 }
 
-export function currentStage(missions) {
-  const mission = currentMission(missions);
-  return mission ? mission.stages[missions.stage] : null;
+export function currentObjective(world) {
+  const m = currentMission(world);
+  if (!m) return 'Free roam — Solmar Bay is yours. Spend your cash, steal cars, stay free.';
+  return `${m.title}: ${m.objective}`;
 }
 
-/** The objective line the HUD shows, e.g. "Misi 2/6 — Jemput Tito: Tito menunggu". */
-export function objectiveText(missions) {
-  const mission = currentMission(missions);
-  if (!mission) return 'Solmar Bay bebas — jelajahi kota, cari mobil, cari uang.';
-  const stage = currentStage(missions);
-  const label = stage ? stage.label : '';
-  return `Misi ${missions.index + 1}/6 — ${mission.name}: ${label}`;
-}
-
-/** How far the current stage is, 0..1 (null when the stage has no measurable
- * progress, e.g. a goto). The HUD draws this as a thin progress bar. */
-export function objectiveProgress(missions) {
-  const stage = currentStage(missions);
-  if (!stage) return null;
-  if (stage.kind === 'wait' || stage.kind === 'survive') {
-    return Math.min(1, missions.stageProgress / stage.seconds);
+// Where the yellow marker points right now, or null.
+export function missionMarker(world) {
+  const m = currentMission(world);
+  if (!m) return null;
+  const s = world.missionStage;
+  switch (m.id) {
+    case 0: return { x: HARBOR_PIER.x + 40, y: HARBOR_PIER.y + 13, label: 'Deliver the package' };
+    case 1:
+      if (s === 'pickup') return { x: HARBOR_PIER.x + 40, y: HARBOR_PIER.y + 13, label: 'Pick up Tico' };
+      return { x: 1600, y: 1200, label: 'Drop Tico downtown' };
+    case 2:
+      if (s === 'steal') return { x: world.hotCar.x, y: world.hotCar.y, label: 'The gold sportscar' };
+      return { x: GARAGE.x + GARAGE.w / 2, y: GARAGE.y + GARAGE.h / 2, label: 'Chop Garage' };
+    case 3: return { x: SPRAY_SHOP.x + SPRAY_SHOP.w / 2, y: SPRAY_SHOP.y + SPRAY_SHOP.h / 2, label: 'Spray Shop' };
+    case 4: return { x: HARBOR_PIER.x + 40, y: HARBOR_PIER.y + 13, label: 'Clear the docks' };
+    case 5:
+      if (s === 'bank') return { x: BANK.x + BANK.w / 2, y: BANK.y + BANK.h / 2, label: 'Solmar Bay Bank' };
+      return { x: SAFEHOUSE.x + SAFEHOUSE.w / 2, y: SAFEHOUSE.y + SAFEHOUSE.h / 2, label: 'Safehouse' };
+    default: return null;
   }
-  if (stage.kind === 'kill') {
-    return Math.min(1, missions.kills / stage.count);
-  }
-  if (stage.kind === 'chase') {
-    const target = missions.targetCar;
-    if (!target) return null;
-    return Math.max(0, Math.min(1, 1 - target.hp / 120));
-  }
-  return null;
 }
 
-/** Total payout of all six missions, for the story-complete screen. */
-export function totalRewards() {
-  return MISSIONS.reduce((sum, m) => sum + m.reward, 0);
-}
-
-function setDialog(missions, speaker, text) {
-  missions.dialog = { speaker, text };
-  missions.dialogTimer = DIALOG_TIME;
-}
-
-function startStage(missions, world) {
-  const stage = currentStage(missions);
-  if (!stage) return;
-  missions.stageTimer = 0;
-  missions.stageProgress = 0;
-  const mission = currentMission(missions);
-  if (stage.kind === 'chase') {
-    missions.targetCar = world.spawnChaseTarget();
-    setDialog(missions, 'Tito', 'Itu mobil Marco! Tabrak dia sampai berhenti, Rico!');
-  } else if (stage.kind === 'survive') {
-    world.setWanted(3);
-    setDialog(missions, 'Mama Rosa', 'Polisi mengepungmu! Bertahan, lalu sembunyi di markas!');
-  } else if (stage.kind === 'kill') {
-    missions.guards = world.spawnGuards(stage.count, stage.x, stage.y);
-    missions.kills = 0;
-    setDialog(missions, 'Mama Rosa', 'Penjaga Marco ada di dermaga. Hati-hati, Rico!');
-  } else if (stage.kind === 'wait') {
-    setDialog(missions, 'Tito', 'Brankasnya terbuka... tahan posisi, alarmnya bunyi!');
-  } else if (missions.stage === 0) {
-    setDialog(missions, mission.giver, mission.brief);
-    world.audio.missionStart();
-  }
-}
-
-/** Begin mission `index` (0-based). Call once per mission. */
-export function startMission(missions, world, index) {
-  missions.index = index;
-  missions.stage = 0;
-  missions.started = true;
-  const mission = currentMission(missions);
-  setDialog(missions, mission.giver, mission.brief);
-  world.audio.missionStart();
-  startStage(missions, world);
-}
-
-/** Advance the stage machine one step; returns MISSION_* flags. */
-export function updateMissions(missions, world, dt) {
-  let events = 0;
-  if (missions.dialogTimer > 0) {
-    missions.dialogTimer -= dt;
-    if (missions.dialogTimer <= 0) missions.dialog = null;
-  }
-  const mission = currentMission(missions);
-  if (!mission || missions.done) return events;
-  const stage = currentStage(missions);
-  const player = world.state.player;
-  const dist = stage && stage.x !== undefined
-    ? Math.hypot(player.x - stage.x, player.y - stage.y)
-    : Infinity;
-
-  let complete = false;
-  if (stage.kind === 'goto') {
-    complete = dist < stage.radius;
-  } else if (stage.kind === 'wait') {
-    if (dist < stage.radius) {
-      missions.stageProgress += dt;
-      if (missions.stageProgress >= stage.seconds) complete = true;
+export function startMission(world, index) {
+  const m = MISSIONS[index];
+  if (!m) return;
+  world.missionIndex = index;
+  world.missionStage = 'start';
+  world.missionTimer = 0;
+  // Per-mission setup.
+  if (m.id === 1) {
+    world.missionStage = 'pickup';
+    world.passenger = { x: HARBOR_PIER.x + 40, y: HARBOR_PIER.y + 13, inCar: false, name: 'Tico' };
+  } else if (m.id === 2) {
+    world.missionStage = 'steal';
+    if (!world.hotCar) {
+      world.hotCar = {
+        x: 1850, y: 1060, angle: 0, speed: 0, type: 5, name: 'Sport', w: 48, h: 21,
+        topSpeed: 470, accel: 340, color: '#ffd94a', axis: 'h', road: 1650, dir: 1,
+        lane: 1, cruise: 0, isPolice: false, isPlayer: false, parked: true, hot: true,
+      };
+      world.parkedCars.push(world.hotCar);
     }
-  } else if (stage.kind === 'survive') {
-    missions.stageProgress += dt;
-    if (missions.stageProgress >= stage.seconds) complete = true;
-  } else if (stage.kind === 'chase') {
-    const target = missions.targetCar;
-    if (target && (!target.active || target.hp <= 0 || target.speed < 5)) {
-      missions.stageProgress += dt;
-      if (missions.stageProgress > 1.2) complete = true;
-    } else {
-      missions.stageProgress = 0;
-    }
-  } else if (stage.kind === 'kill') {
-    complete = missions.kills >= stage.count;
+  } else if (m.id === 3) {
+    world.missionStage = 'escape';
+    addHeat(world, 3, 'framed by the harbour crew');
+    world.message('The cops are onto you! Get to the Spray Shop!', 4);
+  } else if (m.id === 4) {
+    world.missionStage = 'fight';
+    const spots = [
+      { x: HARBOR_PIER.x + 30, y: HARBOR_PIER.y - 60 },
+      { x: HARBOR_PIER.x + 90, y: HARBOR_PIER.y + 40 },
+      { x: HARBOR_PIER.x - 60, y: HARBOR_PIER.y + 30 },
+    ];
+    for (const s of spots) spawnEnemy(world, s.x, s.y, { hp: 70, gun: true });
+  } else if (m.id === 5) {
+    world.missionStage = 'bank';
   }
+  world.showDialog(m.giver, m.intro);
+  world.audio.pickup();
+}
 
-  if (!complete) return events;
-
-  // Stage finished: move on, or pay out and start the next mission.
-  events |= MISSION_STAGE;
-  if (stage.kind === 'wait' && mission.name === 'Rampok Bank Pelabuhan') {
-    world.setWanted(4); // the alarm goes off as the vault opens
-  }
-  if (stage.kind === 'goto' && mission.name === 'Jemput Tito' && missions.stage === 0) {
-    setDialog(missions, 'Tito', 'Akhirnya! Antar aku ke Bar Coral, pantainya lagi ramai.');
-  }
-  missions.stage += 1;
-  if (missions.stage >= mission.stages.length) {
-    world.state.player.money += mission.reward;
-    world.showMessage(`Misi selesai: ${mission.name}  +$${mission.reward}`);
-    world.audio.missionDone();
-    world.saveGame();
-    events |= MISSION_DONE;
-    if (missions.index + 1 >= MISSIONS.length) {
-      missions.done = true;
-      setDialog(missions, 'Mama Rosa', 'Kamu berhasil, Rico. Solmar Bay milik kita lagi.');
-      events |= STORY_DONE;
-    } else {
-      startMission(missions, world, missions.index + 1);
-    }
+function completeMission(world) {
+  const m = currentMission(world);
+  if (!m) return;
+  world.money += m.reward;
+  world.totalEarned += m.reward;
+  world.message(`Mission complete: ${m.title}  +$${m.reward}`, 4);
+  world.audio.missionComplete();
+  world.showDialog(m.giver, m.outro);
+  world.missionIndex += 1;
+  world.missionStage = 'done';
+  world.passenger = null;
+  world.saveGame();
+  if (world.missionIndex >= MISSIONS.length) {
+    world.storyComplete = true;
+    world.state = 'win';
   } else {
-    startStage(missions, world);
+    // A short breather, then the next job calls.
+    world.nextMissionTimer = 3;
   }
-  return events;
 }
 
-/** The chase target flees along the roads, turning away from the player. */
-export function updateChaseTarget(car, city, dt, player, random) {
-  if (!car.active || car.hp <= 0) return;
-  const away = Math.atan2(car.y - player.y, car.x - player.x);
-  // Pick the road direction that points most away from the player.
-  const dirs = [
-    { dx: 1, dy: 0 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }, { dx: 0, dy: -1 },
-  ];
-  let bestDir = car.dir;
-  let bestScore = -Infinity;
-  for (let i = 0; i < 4; i += 1) {
-    if (i === (car.dir + 2) % 4) continue;
-    const score = dirs[i].dx * Math.cos(away) + dirs[i].dy * Math.sin(away) + random() * 0.3;
-    if (score > bestScore) { bestScore = score; bestDir = i; }
+function near(world, x, y, dist = 70) {
+  const p = world.playerCar || world.player;
+  return Math.hypot(p.x - x, p.y - y) < dist;
+}
+
+export function updateMissions(world, dt) {
+  const m = currentMission(world);
+  if (!m) return;
+
+  // The next job starts a few seconds after the last one ends.
+  if (world.missionStage === 'done' && world.nextMissionTimer > 0) {
+    world.nextMissionTimer -= dt;
+    if (world.nextMissionTimer <= 0) startMission(world, world.missionIndex);
+    return;
   }
-  const nearIntersection = ROADS.avenues.some((ax) => Math.abs(car.x - ax) < 30)
-    && ROADS.streets.some((sy) => Math.abs(car.y - sy) < 30);
-  if (nearIntersection && random() < 0.5) car.dir = bestDir;
-  const d = dirs[car.dir];
-  const targetAngle = Math.atan2(d.dy, d.dx);
-  let diff = (targetAngle - car.angle) % (Math.PI * 2);
-  if (diff > Math.PI) diff -= Math.PI * 2;
-  if (diff < -Math.PI) diff += Math.PI * 2;
-  car.angle += Math.max(-3 * dt, Math.min(3 * dt, diff));
-  car.speed += Math.max(-400 * dt, Math.min(380 * dt, 430 - car.speed));
-  car.x += Math.cos(car.angle) * car.speed * dt;
-  car.y += Math.sin(car.angle) * car.speed * dt;
-  city.clampWorld(car, 22);
-  // Snap onto the road centreline after a turn, like traffic does.
-  if (car.dir === 0 || car.dir === 2) {
-    const sy = ROADS.streets.reduce((a, b) => (Math.abs(b - car.y) < Math.abs(a - car.y) ? b : a));
-    car.y += (sy - car.y) * Math.min(1, 3 * dt);
-  } else {
-    const ax = ROADS.avenues.reduce((a, b) => (Math.abs(b - car.x) < Math.abs(a - car.x) ? b : a));
-    car.x += (ax - car.x) * Math.min(1, 3 * dt);
+
+  switch (m.id) {
+    case 0:
+      if (near(world, HARBOR_PIER.x + 40, HARBOR_PIER.y + 13)) completeMission(world);
+      break;
+    case 1:
+      if (world.missionStage === 'pickup') {
+        if (near(world, HARBOR_PIER.x + 40, HARBOR_PIER.y + 13, 60)) {
+          world.missionStage = 'deliver';
+          if (world.passenger) world.passenger.inCar = true;
+          world.message('Tico is with you. Get him downtown, in one piece!', 3.5);
+          world.audio.pickup();
+        }
+      } else if (near(world, 1600, 1200)) {
+        completeMission(world);
+      }
+      break;
+    case 2:
+      if (world.missionStage === 'steal') {
+        if (world.playerCar === world.hotCar) {
+          world.missionStage = 'deliver';
+          world.message('That is the one! Now get it to the Chop Garage.', 3.5);
+          addHeat(world, 1, 'stole the gold sportscar');
+        }
+      } else if (world.playerCar === world.hotCar
+        && Math.hypot(world.playerCar.x - (GARAGE.x + GARAGE.w / 2), world.playerCar.y - (GARAGE.y + GARAGE.h / 2)) < 130) {
+        // Hand the car over: leave it parked in the garage.
+        world.parkedCars.push(world.playerCar);
+        world.playerCar.parked = true;
+        world.playerCar.x = GARAGE.x + 40;
+        world.playerCar.y = GARAGE.y + 55;
+        world.playerCar.speed = 0;
+        world.exitCar();
+        completeMission(world);
+      }
+      break;
+    case 3:
+      if (world.wantedStars === 0) completeMission(world);
+      break;
+    case 4:
+      if (world.enemies.length === 0) completeMission(world);
+      break;
+    case 5:
+      if (world.missionStage === 'bank') {
+        if (near(world, BANK.x + BANK.w / 2, BANK.y + BANK.h / 2, 90)) {
+          world.missionStage = 'escape';
+          addHeat(world, 4, 'robbed the Solmar Bay Bank');
+          world.message('Cash grabbed! Four stars! Lose them and get home!', 4);
+          world.audio.cash();
+        }
+      } else if (near(world, SAFEHOUSE.x + SAFEHOUSE.w / 2, SAFEHOUSE.y + SAFEHOUSE.h / 2, 100)) {
+        completeMission(world);
+      }
+      break;
+    default:
+      break;
   }
 }

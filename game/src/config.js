@@ -1,203 +1,121 @@
-// Solmar Bay — every tuning number, colour and story constant in one place.
-// The city is a fixed 3600 x 2600 world; the camera follows the player, so no rule
-// below depends on the screen size. All names, people and places are original.
-//
-// Revision notes (this session): added CAMERA smoothing + zoom bounds, a SAVE_VERSION
-// so old saves are ignored instead of misread, PICKUP_RESPAWN so collected pickups
-// come back, and a DIFFICULTY table that scales police aggression per wanted star
-// instead of hard-coding the numbers inside police.js.
+// Solmar Bay — configuration: world size, roads, districts, vehicles, prices.
+// One place for every tunable number so the rest of the game reads like a design doc.
 
-/** The simulation's fixed step, in seconds: 60 updates a second whatever the display's rate. */
-export const STEP = 1 / 60;
+export const WORLD_W = 3200;
+export const WORLD_H = 2400;
 
-/** World size in pixels (top-down). */
-export const WORLD = { width: 3600, height: 2600 };
+// Road centrelines. Vertical roads run north-south, horizontal roads east-west.
+export const V_ROADS = [200, 600, 1000, 1400, 1800, 2200, 2600, 3000];
+export const H_ROADS = [200, 600, 1000, 1400, 1800, 2200];
+export const ROAD_HALF = 48; // half the asphalt width
+export const LANE = 24; // distance from a road centreline to a lane centre
 
-/** Camera: how fast it chases the player, and the zoom window the renderer clamps to. */
-export const CAMERA = { follow: 6, minScale: 0.55, maxScale: 1.4 };
+// Water: the harbour bites into the west edge, the sea along the south edge.
+export const HARBOR_WATER_X = 140; // everything west of this is sea
+export const BEACH_Y = 2050; // sand starts here
+export const SEA_Y = 2290; // open water starts here
 
-/** Save format version: a save stamped with another version is ignored on load. */
-export const SAVE_VERSION = 2;
+// Districts, by position. Downtown sits in the middle, the harbour west,
+// the beach south, suburbs everywhere else.
+export function districtAt(x, y) {
+  if (x < 480) return 'harbor';
+  if (y > BEACH_Y) return 'beach';
+  if (x > 1150 && x < 2150 && y > 750 && y < 1750) return 'downtown';
+  return 'suburb';
+}
 
-/** Road layout: avenues run north-south, streets east-west. */
-export const ROADS = {
-  avenues: [300, 700, 1100, 1500, 1900, 2300, 2700, 3100],
-  streets: [250, 650, 1050, 1450, 1850, 2250],
-  width: 96,
-  sidewalk: 26,
-  lane: 24,
+export const DISTRICT_NAMES = {
+  harbor: 'Harbor District',
+  downtown: 'Downtown',
+  beach: 'Solmar Beach',
+  suburb: 'Palm Suburbs',
 };
 
-/** Districts, by region: port west, downtown centre, beach east, suburb south. */
-export const DISTRICTS = [
-  { name: 'Pelabuhan', x0: 0, y0: 0, x1: 700, y1: 2600 },
-  { name: 'Downtown', x0: 1100, y1: 1450, x1: 2300, y0: 650 },
-  { name: 'Pantai Coral', x0: 3100, y0: 0, x1: 3600, y1: 2600 },
-  { name: 'Suburb', x0: 0, y0: 1850, x1: 3600, y1: 2600 },
-];
+// Landmark spots (fixed so missions and screenshots can rely on them).
+export const SPRAY_SHOP = { x: 1150, y: 1150, w: 170, h: 100, name: 'Spray Shop' };
+export const SAFEHOUSE = { x: 2430, y: 330, w: 130, h: 110, name: 'Rico\u2019s Safehouse' };
+export const ROSAS_PLACE = { x: 470, y: 470, w: 150, h: 110, name: 'Mama Rosa\u2019s Caf\u00e9' };
+export const HARBOR_PIER = { x: 60, y: 600, w: 90, h: 26 };
+export const BANK = { x: 1560, y: 960, w: 190, h: 130, name: 'Solmar Bay Bank' };
+export const GARAGE = { x: 2650, y: 1650, w: 170, h: 110, name: 'Chop Garage' };
 
+// Player tuning.
 export const PLAYER = {
   radius: 14,
-  walkSpeed: 210,
-  runSpeed: 300,
+  walkSpeed: 185,
+  runSpeed: 265,
   health: 100,
-  startMoney: 150,
-  startAmmo: 24,
-  punchDamage: 25,
+  punchDamage: 14,
   punchRange: 34,
-  punchArc: 1.1,
+  punchCooldown: 0.32,
+  pistolDamage: 34,
+  pistolCooldown: 0.24,
+  startAmmo: 24,
+  startMoney: 60,
 };
 
-export const CAR = {
-  length: 46,
-  width: 24,
-  radius: 22,
-  accel: 420,
-  brake: 700,
-  reverseMax: 160,
-  maxSpeed: 520,
-  policeMaxSpeed: 560,
-  turnRate: 2.6,
+// Driving tuning.
+export const DRIVING = {
+  accel: 300,
+  brake: 520,
+  reverseAccel: 200,
+  maxSpeed: 430,
+  maxReverse: 150,
+  steerRate: 2.6,
+  grip: 3.2,
   drag: 0.55,
-  crashDamageSpeed: 320,
 };
 
-export const TRAFFIC = { count: 40, speed: 150, minGap: 78 };
-export const PEDS = { count: 48, speed: 55 };
-
-export const WANTED = {
-  max: 5,
-  stealCar: 1,
-  hitPed: 1,
-  shoot: 1,
-  killCop: 2,
-  decaySeconds: 26,
-  sprayCostPerStar: 100,
-};
-
-/** Police aggression per wanted star: top speed, ram cooldown and foot-cop speed. */
-export const DIFFICULTY = {
-  policeSpeed: [0, 380, 410, 440, 470, 500],
-  ramCooldown: [0, 1.6, 1.4, 1.2, 1.0, 0.8],
-  copSpeed: [0, 210, 225, 235, 250, 265],
-};
-
-export const POLICE = {
-  maxCars: 6,
-  maxCops: 8,
-  spawnDistance: 700,
-  ramDamage: 8,
-  copPunchDamage: 6,
-  copShootRange: 320,
-};
-
-export const BULLET = { speed: 900, life: 0.9, damage: 34, radius: 4 };
-
-export const PICKUPS = {
-  cash: { value: 60 },
-  ammo: { amount: 12 },
-  health: { amount: 35 },
-  /** Seconds until a collected pickup reappears somewhere new. */
-  respawnSeconds: 45,
-};
-
-export const DAY = { cycleSeconds: 300, start: 0.32 };
-
-export const PALETTE = {
-  grass: '#5d8a4a',
-  park: '#4c7a3e',
-  sand: '#e0c98f',
-  water: '#2f7fa8',
-  deepWater: '#256b8f',
-  road: '#3a3f46',
-  roadEdge: '#2c3036',
-  lane: '#d8c95a',
-  sidewalk: '#8d8f94',
-  plaza: '#7a7d84',
-  buildingRoof: ['#b0563f', '#4f6d8a', '#7a5a8a', '#8a6d4f', '#5a8a6d', '#9a8a6a'],
-  downtownRoof: ['#3f5a78', '#5a4a6d', '#6d5a3f', '#46586b'],
-  houseRoof: ['#a8543f', '#7a6a4f', '#5a7a8a', '#8a4f5a'],
-  warehouseRoof: ['#6d7a80', '#7a6d5a', '#5a6d6d'],
-  lamp: '#ffd98a',
-  sprayShop: '#e8b23a',
-  marker: '#ffcf3f',
-  player: '#2fae5f',
-  playerCar: '#e84c3d',
-  policeCar: '#2f6fd0',
-  policeLightRed: '#ff2f2f',
-  policeLightBlue: '#2f7fff',
-  text: '#f2f4f6',
-  muted: '#aab2bb',
-  panel: 'rgba(12, 16, 22, 0.78)',
-  danger: '#ff5a4d',
-  money: '#7be382',
-};
-
-export const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
-
-/** Where the save lives between visits (this browser only). */
-export const SAVE_KEY = 'solmar-bay.save.v1';
-
-/** The six chained story missions. Every name is original. */
-export const MISSIONS = [
-  {
-    name: 'Paket untuk Rosa',
-    giver: 'Mama Rosa',
-    brief: 'Antar paket ke kafe Mama Rosa di Downtown. Jangan sampai paketnya basah.',
-    reward: 150,
-    stages: [{ kind: 'goto', x: 1520, y: 690, radius: 60, label: 'Kafe Mama Rosa' }],
-  },
-  {
-    name: 'Jemput Tito',
-    giver: 'Mama Rosa',
-    brief: 'Tito menunggu di sudut Pelabuhan. Jemput dia, lalu antar ke Bar Coral di pantai.',
-    reward: 250,
-    stages: [
-      { kind: 'goto', x: 730, y: 1090, radius: 55, label: 'Tito menunggu' },
-      { kind: 'goto', x: 3300, y: 690, radius: 60, label: 'Bar Coral' },
-    ],
-  },
-  {
-    name: 'Kejar si Pengkhianat',
-    giver: 'Tito',
-    brief: 'Marco kabur bawa uang kas. Kejar mobilnya dan tabrak sampai berhenti!',
-    reward: 400,
-    stages: [{ kind: 'chase', label: 'Tabrak mobil Marco' }],
-  },
-  {
-    name: 'Kabur dari Polisi',
-    giver: 'Mama Rosa',
-    brief: 'Polisi mengepungmu! Bertahan 30 detik, lalu sembunyi di markas Suburb.',
-    reward: 500,
-    stages: [
-      { kind: 'survive', seconds: 30, label: 'Bertahan dari kejaran' },
-      { kind: 'goto', x: 1930, y: 2290, radius: 60, label: 'Markas Suburb' },
-    ],
-  },
-  {
-    name: 'Rampok Bank Pelabuhan',
-    giver: 'Tito',
-    brief: 'Masuk bank, tahan 8 detik sampai brankas terbuka, lalu kabur ke Spray Shop.',
-    reward: 800,
-    stages: [
-      { kind: 'goto', x: 730, y: 290, radius: 55, label: 'Bank Pelabuhan' },
-      { kind: 'wait', seconds: 8, x: 730, y: 290, radius: 70, label: 'Buka brankas...' },
-      { kind: 'goto', x: 1520, y: 2290, radius: 70, label: 'Spray Shop — hapus jejak' },
-    ],
-  },
-  {
-    name: 'Akhir di Pelabuhan',
-    giver: 'Mama Rosa',
-    brief: 'Ini yang terakhir, Rico. Ke dermaga, hadapi penjaga Marco, naik ke kapal.',
-    reward: 1500,
-    stages: [
-      { kind: 'goto', x: 350, y: 1890, radius: 70, label: 'Dermaga Pelabuhan' },
-      { kind: 'kill', count: 4, x: 350, y: 1890, radius: 260, label: 'Kalahkan 4 penjaga' },
-      { kind: 'goto', x: 170, y: 1890, radius: 55, label: 'Naik ke kapal' },
-    ],
-  },
+// Vehicle types the city spawns.
+export const CAR_TYPES = [
+  { name: 'Sedan', w: 46, h: 22, topSpeed: 400, accel: 280, color: '#c94f43' },
+  { name: 'Taxi', w: 46, h: 22, topSpeed: 390, accel: 270, color: '#e8b93a' },
+  { name: 'Hatchback', w: 42, h: 21, topSpeed: 370, accel: 300, color: '#4f8fc9' },
+  { name: 'Pickup', w: 52, h: 23, topSpeed: 380, accel: 260, color: '#7a5a3a' },
+  { name: 'Van', w: 56, h: 24, topSpeed: 330, accel: 220, color: '#d8d3c4' },
+  { name: 'Sport', w: 48, h: 21, topSpeed: 470, accel: 340, color: '#8a2f6d' },
+  { name: 'Truck', w: 64, h: 26, topSpeed: 300, accel: 190, color: '#5a6b52' },
 ];
 
-export const STORY_END =
-  'Rico menatap matahari terbenam di Teluk Solmar. Uang kas kembali, Marco kabur, ' +
-  'dan Mama Rosa sudah menyiapkan makan malam. Solmar Bay tetap milik mereka.';
+// Wanted system.
+export const WANTED = {
+  maxStars: 5,
+  stealCarHeat: 1,
+  killHeat: 1,
+  shootHeat: 0.5,
+  decayPerSecond: 0.045, // heat slowly cools when nobody is chasing
+  sprayCostPerStar: 120,
+  policeCarPerStar: 1, // +1 patrol car per star
+  footCopPerStar: 1,
+};
+
+// Money.
+export const PRICES = {
+  pistolAmmo: 40, // a box of 24 rounds at the corner shop is free in this build: pickups only
+  sprayPerStar: 120,
+};
+
+// Colours.
+export const COLORS = {
+  grass: '#5d8a4a',
+  grassDark: '#527c40',
+  sand: '#e0c98f',
+  sea: '#2e7fa8',
+  seaDeep: '#256b8f',
+  asphalt: '#3c3f45',
+  asphaltLight: '#464a52',
+  sidewalk: '#9a9a92',
+  curb: '#c9c9bd',
+  crosswalk: '#d8d8cc',
+  buildingRoof: '#7d6a5c',
+  downtownRoof: '#5c6b7a',
+  houseRoof: '#a85a4a',
+  warehouseRoof: '#6b7a6e',
+  park: '#4c7a3d',
+  player: '#e8c33a',
+  police: '#20242c',
+};
+
+// Day cycle: one full day lasts this long in seconds of play.
+export const DAY_LENGTH = 300;
+export const SAVE_KEY = 'solmar-bay-save-v1';

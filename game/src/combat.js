@@ -1,201 +1,218 @@
-// Combat: the pistol (mouse aim, limited ammo), the punch (Space, close range),
-// and the pickups scattered around the city (cash, ammo, health). Bullets fly,
-// spark on walls, and hurt pedestrians, cops, guards and the chase target.
-//
-// Revision notes (this session): a punch now shoves its target back (knockback), so
-// it feels like a hit instead of a number change; bullets keep their previous
-// position so the renderer can draw a tracer line; and guards hit by a punch are
-// pushed away from the player too.
+// Solmar Bay — combat: fists, a pistol, bullets, armed thugs, and the
+// pickups they drop. Shooting is mouse-aimed on foot; Space fires too.
 
-import { BULLET, PICKUPS, PLAYER } from './config.js';
+import { PLAYER } from './config.js';
+import { collideBuildings } from './city.js';
+import { addHeat } from './police.js';
 
-export function createCombat() {
-  return { bullets: [], pickups: [], punchTimer: 0, shootTimer: 0 };
+export function spawnEnemy(world, x, y, opts = {}) {
+  const enemy = {
+    x, y,
+    angle: 0,
+    hp: opts.hp || 60,
+    maxHp: opts.hp || 60,
+    gun: !!opts.gun,
+    speed: 120 + world.rand() * 30,
+    shootTimer: 1 + world.rand(),
+    walkPhase: world.rand() * 6,
+    state: 'chase',
+  };
+  world.enemies.push(enemy);
+  return enemy;
 }
 
-/** Fire one pistol round from (x, y) toward an angle. Returns false when out of ammo. */
-export function shoot(combat, state, x, y, angle) {
-  const player = state.player;
-  if (combat.shootTimer > 0 || player.ammo <= 0) return false;
-  combat.shootTimer = 0.22;
+export function spawnPickup(world, x, y, kind) {
+  world.pickups.push({ x, y, kind, bob: world.rand() * 6 });
+}
+
+export function playerPunch(world) {
+  const { player } = world;
+  if (player.punchTimer > 0 || world.playerCar) return;
+  player.punchTimer = PLAYER.punchCooldown;
+  player.attacking = true;
+  player.attackTimer = 0.18;
+  world.audio.punch();
+  const reach = PLAYER.punchRange + 14;
+  const cx = player.x + Math.cos(player.angle) * reach;
+  const cy = player.y + Math.sin(player.angle) * reach;
+  // Enemies first, then pedestrians (a crime), then nothing but air.
+  for (const enemy of world.enemies) {
+    if (Math.hypot(enemy.x - cx, enemy.y - cy) < 34) {
+      damageEnemy(world, enemy, PLAYER.punchDamage);
+      world.addParticles(enemy.x, enemy.y, 6, '#ffd27a');
+      return;
+    }
+  }
+  for (const ped of world.peds) {
+    if (Math.hypot(ped.x - cx, ped.y - cy) < 30) {
+      world.peds.splice(world.peds.indexOf(ped), 1);
+      world.addParticles(ped.x, ped.y, 8, '#ff6a5a');
+      addHeat(world, 1, 'assaulted a pedestrian');
+      world.message('That was a civilian! The cops saw that.', 3);
+      return;
+    }
+  }
+}
+
+export function playerShoot(world, targetX, targetY) {
+  const { player } = world;
+  if (world.playerCar) return;
+  if (player.shootTimer > 0) return;
+  if (player.weapon !== 'pistol') {
+    playerPunch(world);
+    return;
+  }
+  if (player.ammo <= 0) {
+    world.message('Out of ammo! Find a green ammo box.', 2.5);
+    world.audio.click();
+    player.shootTimer = 0.3;
+    return;
+  }
+  player.shootTimer = PLAYER.pistolCooldown;
   player.ammo -= 1;
-  combat.bullets.push({
-    x: x + Math.cos(angle) * 20,
-    y: y + Math.sin(angle) * 20,
-    vx: Math.cos(angle) * BULLET.speed,
-    vy: Math.sin(angle) * BULLET.speed,
-    life: BULLET.life,
+  const angle = Math.atan2(targetY - player.y, targetX - player.x);
+  player.angle = angle;
+  world.bullets.push({
+    x: player.x + Math.cos(angle) * 20,
+    y: player.y + Math.sin(angle) * 20,
+    vx: Math.cos(angle) * 720,
+    vy: Math.sin(angle) * 720,
     fromPlayer: true,
-    active: true,
-    prevX: x + Math.cos(angle) * 20,
-    prevY: y + Math.sin(angle) * 20,
+    damage: PLAYER.pistolDamage,
+    life: 1.2,
   });
-  state.audio.shoot();
-  state.spawnParticles(x + Math.cos(angle) * 26, y + Math.sin(angle) * 26, 4, '#ffd23f', 90);
-  return true;
+  world.lastShotX = player.x;
+  world.lastShotY = player.y;
+  world.lastShotAt = world.time;
+  world.audio.gunshot();
+  world.addParticles(player.x + Math.cos(angle) * 24, player.y + Math.sin(angle) * 24, 3, '#ffe08a');
+  addHeat(world, 0.25, 'fired a gun in public');
 }
 
-/** Shove a target away from the player by `amount` px (punch knockback). */
-function knockback(target, px, py, amount) {
-  const dx = target.x - px;
-  const dy = target.y - py;
-  const len = Math.hypot(dx, dy) || 1;
-  target.x += (dx / len) * amount;
-  target.y += (dy / len) * amount;
+export function damageEnemy(world, enemy, amount) {
+  enemy.hp -= amount;
+  if (enemy.hp <= 0) {
+    const idx = world.enemies.indexOf(enemy);
+    if (idx >= 0) world.enemies.splice(idx, 1);
+    world.addParticles(enemy.x, enemy.y, 14, '#ff6a5a');
+    world.audio.crash();
+    // Thugs drop cash and sometimes ammo.
+    const cash = 30 + Math.floor(world.rand() * 40);
+    world.money += cash;
+    world.message(`Thug down. +$${cash} looted.`, 2.5);
+    if (world.rand() < 0.5) spawnPickup(world, enemy.x + 12, enemy.y + 8, 'ammo');
+    addHeat(world, 0.5, 'shot a thug in self-defence');
+  }
 }
 
-/** A punch: hits the nearest hostile or walker inside the arc in front of the player. */
-export function punch(combat, state) {
-  const player = state.player;
-  if (combat.punchTimer > 0) return false;
-  combat.punchTimer = 0.35;
-  state.audio.punch();
-  const px = player.x;
-  const py = player.y;
-  const angle = player.angle;
-  function inArc(target, range) {
-    const dx = target.x - px;
-    const dy = target.y - py;
-    const dist = Math.hypot(dx, dy);
-    if (dist > range) return false;
-    let diff = Math.atan2(dy, dx) - angle;
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    return Math.abs(diff) < PLAYER.punchArc;
-  }
-  let hit = false;
-  for (const cop of state.police.cops) {
-    if (cop.active && inArc(cop, PLAYER.punchRange + 14)) {
-      cop.hp -= PLAYER.punchDamage;
-      knockback(cop, px, py, 18);
-      if (cop.hp <= 0) cop.active = false;
-      hit = true;
-    }
-  }
-  for (const guard of state.missions.guards) {
-    if (guard.active && inArc(guard, PLAYER.punchRange + 14)) {
-      guard.hp -= PLAYER.punchDamage;
-      knockback(guard, px, py, 18);
-      if (guard.hp <= 0) {
-        guard.active = false;
-        state.missions.kills += 1;
+export function updateBullets(world, dt) {
+  for (let i = world.bullets.length - 1; i >= 0; i--) {
+    const b = world.bullets[i];
+    b.x += b.vx * dt;
+    b.y += b.vy * dt;
+    b.life -= dt;
+    let dead = b.life <= 0;
+    // Walls stop bullets.
+    for (const building of world.city.buildings) {
+      if (b.x >= building.x && b.x <= building.x + building.w && b.y >= building.y && b.y <= building.y + building.h) {
+        world.addParticles(b.x, b.y, 4, '#c9c2b2');
+        dead = true;
+        break;
       }
-      hit = true;
     }
-  }
-  for (const ped of state.peds) {
-    if (ped.active && inArc(ped, PLAYER.punchRange + 12)) {
-      ped.active = false;
-      state.knockPed(ped);
-      hit = true;
-      break;
-    }
-  }
-  if (hit) state.spawnParticles(px + Math.cos(angle) * 26, py + Math.sin(angle) * 26, 6, '#ffffff', 120);
-  return hit;
-}
-
-/** Scatter the city's pickups: cash, ammo and health, near roads and landmarks. */
-export function spawnPickups(combat, city, random) {
-  const spots = [];
-  for (let i = 0; i < 14; i += 1) {
-    const road = city.nearestRoad(200 + random() * 3200, 200 + random() * 2200);
-    const x = road.x + (random() - 0.5) * 160;
-    const y = road.y + (random() - 0.5) * 160;
-    if (city.isWater(x, y)) continue;
-    const kind = i % 3 === 0 ? 'cash' : i % 3 === 1 ? 'ammo' : 'health';
-    spots.push({ x, y, kind, bob: random() * Math.PI * 2, active: true });
-  }
-  combat.pickups = spots;
-}
-
-/** Move bullets, test hits, and let the player collect pickups. */
-export function updateCombat(combat, state, dt) {
-  combat.shootTimer = Math.max(0, combat.shootTimer - dt);
-  combat.punchTimer = Math.max(0, combat.punchTimer - dt);
-  const player = state.player;
-  for (const bullet of combat.bullets) {
-    if (!bullet.active) continue;
-    bullet.prevX = bullet.x;
-    bullet.prevY = bullet.y;
-    bullet.x += bullet.vx * dt;
-    bullet.y += bullet.vy * dt;
-    bullet.life -= dt;
-    if (bullet.life <= 0) { bullet.active = false; continue; }
-    const hitWall = state.city.resolveCircle({ x: bullet.x, y: bullet.y }, BULLET.radius);
-    if (hitWall) {
-      bullet.active = false;
-      state.spawnParticles(bullet.x, bullet.y, 5, '#ffb03a', 110);
-      continue;
-    }
-    if (bullet.fromPlayer) {
-      let done = false;
-      for (const cop of state.police.cops) {
-        if (cop.active && Math.hypot(cop.x - bullet.x, cop.y - bullet.y) < 16) {
-          cop.hp -= BULLET.damage;
-          if (cop.hp <= 0) {
-            cop.active = false;
-            state.addWanted(2);
-          }
-          bullet.active = false;
-          done = true;
+    if (dead) { world.bullets.splice(i, 1); continue; }
+    if (b.fromPlayer) {
+      for (const enemy of [...world.enemies]) {
+        if (Math.hypot(enemy.x - b.x, enemy.y - b.y) < 18) {
+          damageEnemy(world, enemy, b.damage);
+          dead = true;
           break;
         }
       }
-      if (done) continue;
-      for (const guard of state.missions.guards) {
-        if (guard.active && Math.hypot(guard.x - bullet.x, guard.y - bullet.y) < 16) {
-          guard.hp -= BULLET.damage;
-          if (guard.hp <= 0) {
-            guard.active = false;
-            state.missions.kills += 1;
-          }
-          bullet.active = false;
-          done = true;
+      if (dead) { world.bullets.splice(i, 1); continue; }
+      // A stray round can hit a pedestrian: a crime with witnesses.
+      for (const ped of [...world.peds]) {
+        if (Math.hypot(ped.x - b.x, ped.y - b.y) < 14) {
+          world.peds.splice(world.peds.indexOf(ped), 1);
+          world.addParticles(ped.x, ped.y, 8, '#ff6a5a');
+          addHeat(world, 1, 'shot a pedestrian');
+          dead = true;
           break;
         }
       }
-      if (done) continue;
-      const target = state.missions.targetCar;
-      if (target && target.active && Math.hypot(target.x - bullet.x, target.y - bullet.y) < 26) {
-        target.hp -= BULLET.damage;
-        state.spawnParticles(bullet.x, bullet.y, 6, '#ff8a3d', 130);
-        bullet.active = false;
-        continue;
+      if (dead) { world.bullets.splice(i, 1); }
+    } else {
+      const { player } = world;
+      if (!world.playerCar && Math.hypot(player.x - b.x, player.y - b.y) < 15) {
+        world.damagePlayer(b.damage * 0.6, 'shot by a thug');
+        world.bullets.splice(i, 1);
       }
-      for (const ped of state.peds) {
-        if (ped.active && Math.hypot(ped.x - bullet.x, ped.y - bullet.y) < 14) {
-          ped.active = false;
-          state.knockPed(ped);
-          bullet.active = false;
-          break;
-        }
-      }
-    } else if (Math.hypot(player.x - bullet.x, player.y - bullet.y) < 16) {
-      // A guard's bullet found the player.
-      bullet.active = false;
-      state.damagePlayer(BULLET.damage * 0.6, 'tembakan');
     }
   }
-  combat.bullets = combat.bullets.filter((b) => b.active);
+}
 
-  // Pickups: walk over one to collect it.
-  for (const pickup of combat.pickups) {
-    if (!pickup.active) continue;
-    pickup.bob += dt * 3;
-    if (Math.hypot(player.x - pickup.x, player.y - pickup.y) < 30) {
-      pickup.active = false;
-      if (pickup.kind === 'cash') {
-        player.money += PICKUPS.cash.value;
-        state.showMessage(`+$${PICKUPS.cash.value} uang jalanan`);
-      } else if (pickup.kind === 'ammo') {
-        player.ammo += PICKUPS.ammo.amount;
-        state.showMessage(`+${PICKUPS.ammo.amount} peluru`);
-      } else {
-        player.health = Math.min(100, player.health + PICKUPS.health.amount);
-        state.showMessage(`+${PICKUPS.health.amount} nyawa`);
+export function updateEnemies(world, dt) {
+  const { player } = world;
+  const target = world.playerCar || player;
+  for (const enemy of [...world.enemies]) {
+    const dx = target.x - enemy.x;
+    const dy = target.y - enemy.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    enemy.angle = Math.atan2(dy, dx);
+    enemy.walkPhase += dt * 9;
+    enemy.shootTimer -= dt;
+    if (dist > 260) {
+      // Too far: walk toward the player.
+      enemy.x += (dx / dist) * enemy.speed * dt;
+      enemy.y += (dy / dist) * enemy.speed * dt;
+    } else if (dist < 120) {
+      // Too close: back off a little and shoot.
+      enemy.x -= (dx / dist) * enemy.speed * 0.4 * dt;
+      enemy.y -= (dy / dist) * enemy.speed * 0.4 * dt;
+    }
+    if (enemy.gun && enemy.shootTimer <= 0 && dist < 420 && !world.playerCar) {
+      enemy.shootTimer = 1.1 + world.rand() * 0.8;
+      const spread = (world.rand() - 0.5) * 0.22;
+      const angle = enemy.angle + spread;
+      world.bullets.push({
+        x: enemy.x + Math.cos(angle) * 20,
+        y: enemy.y + Math.sin(angle) * 20,
+        vx: Math.cos(angle) * 560,
+        vy: Math.sin(angle) * 560,
+        fromPlayer: false,
+        damage: 14,
+        life: 1.4,
+      });
+      world.audio.enemyShot();
+      world.addParticles(enemy.x + Math.cos(angle) * 24, enemy.y + Math.sin(angle) * 24, 3, '#ffe08a');
+    }
+    // Melee range: thugs punch.
+    if (dist < 30 && !world.playerCar) {
+      world.damagePlayer(14 * dt, 'beaten by a thug');
+    }
+    collideBuildings(enemy, 13, world.city.buildings);
+  }
+}
+
+export function updatePickups(world, dt) {
+  const { player } = world;
+  const target = world.playerCar || player;
+  for (let i = world.pickups.length - 1; i >= 0; i--) {
+    const p = world.pickups[i];
+    p.bob += dt * 3;
+    if (Math.hypot(p.x - target.x, p.y - target.y) < 34) {
+      if (p.kind === 'ammo') {
+        player.ammo += 24;
+        world.message('Ammo +24', 2);
+      } else if (p.kind === 'health') {
+        player.health = Math.min(100, player.health + 35);
+        world.message('Health +35', 2);
+      } else if (p.kind === 'cash') {
+        world.money += 50;
+        world.message('Cash +$50', 2);
       }
-      state.audio.pickup();
+      world.audio.pickup();
+      world.pickups.splice(i, 1);
     }
   }
 }
