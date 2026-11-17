@@ -1,8 +1,8 @@
 # Solmar Bay — Open-World Crime
 
-[![make.fun](https://img.shields.io/badge/make.fun-gta6--01-ff6b35?style=for-the-badge)](https://make.fun/c/gta6-01)
-[![Prize $1,666](https://img.shields.io/badge/prize-%241%2C666-gold?style=for-the-badge)](https://make.fun/c/gta6-01)
-[![Play offline](https://img.shields.io/badge/play-offline%20in%20Chrome-2fae5f?style=for-the-badge)](#cara-main)
+[![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![rank](https://make.fun/badge/gta6-01/cunong05/gta6-01-entry/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![reward](https://make.fun/badge/gta6-01/cunong05/gta6-01-entry/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
 **Solmar Bay** adalah game open-world crime 2D top-down yang orisinal — kota pesisir
 tropis fiktif, bukan GTA dan bukan Rockstar. Dibangun untuk bounty
